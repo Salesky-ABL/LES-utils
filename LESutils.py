@@ -186,3 +186,97 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     print("Finished saving all files!")
     return
 # ---------------------------------------------
+def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
+    """Read multiple output netcdf files created by sim2netcdf() to calculate
+    averages in x, y, t and save as new netcdf file
+
+    :param str dnc: absolute path to directory for loading netCDF files
+    :param int t0: first timestep to process
+    :param int t1: last timestep to process
+    :param int dt: number of timesteps between files to load
+    :param float delta_t: dimensional timestep in simulation (seconds)
+    :param bool use_dissip: flag for loading dissipation rate files (SBL only)
+    :param bool detrend_stats: flag for detrending fields in time when\
+        calculating statistics
+    :param str tavg: label denoting length of temporal averaging (e.g. 1h)
+    """
+    # directories and configuration
+    timesteps = np.arange(t0, t1, dt, dtype=np.int32)
+    # determine files to read from timesteps
+    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+    nf = len(fall)
+    # calculate array of times represented by each file
+    times = np.array([i*delta_t*dt for i in range(nf)])
+    # --------------------------------
+    # Load files and clean up
+    # --------------------------------
+    print("Reading files...")
+    dd = xr.open_mfdataset(fall, combine="nested", concat_dim="time")
+    dd.coords["time"] = times
+    dd.time.attrs["units"] = "s"
+    # --------------------------------
+    # Calculate statistics
+    # --------------------------------
+    print("Beginning calculations")
+    # create empty dataset that will hold everything
+    dd_stat = xr.Dataset()
+    # list of base variables
+    base = ["u", "v", "w", "theta"]
+    base1 = ["u", "v", "w", "theta"] # use for looping over vars in case dissip not used
+    # check for dissip
+    if use_dissip:
+        base.append("dissip")
+    # calculate means
+    for s in base:
+        dd_stat[f"{s}_mean"] = dd[s].mean(dim=("time", "x", "y"))
+    # calculate covars
+    # u'w'
+    dd_stat["uw_cov_res"] = xr.cov(dd.u, dd.w, dim=("time", "x", "y"))
+    dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd.txz.mean(dim=("time","x","y"))
+    # v'w'
+    dd_stat["vw_cov_res"] = xr.cov(dd.v, dd.w, dim=("time", "x", "y"))
+    dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd.tyz.mean(dim=("time","x","y"))
+    # theta'w'
+    dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("time", "x", "y"))
+    dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd.q3.mean(dim=("time","x","y"))
+    # calculate vars
+    for s in base1:
+        if detrend_stats:
+            vv = np.var(detrend(dd[s], axis=0, type="linear"), axis=(0,1,2))
+            dd_stat[f"{s}_var"] = xr.DataArray(vv, dims=("z"), coords=dict(z=dd.z))
+        else:
+            dd_stat[f"{s}_var"] = dd[s].var(dim=("time", "x", "y"))
+    # rotate u_mean and v_mean so <v> = 0
+    angle = np.arctan2(dd_stat.v_mean, dd_stat.u_mean)
+    dd_stat["u_mean_rot"] = dd_stat.u_mean*np.cos(angle) + dd_stat.v_mean*np.sin(angle)
+    dd_stat["v_mean_rot"] =-dd_stat.u_mean*np.sin(angle) + dd_stat.v_mean*np.cos(angle)
+    # rotate instantaneous u and v for variances 
+    # (not sure if necessary by commutative property but might as well)
+    angle_inst = np.arctan2(dd.v.mean(dim=("x","y")), dd.u.mean(dim=("x","y")))
+    u_rot = dd.u*np.cos(angle_inst) + dd.v*np.sin(angle_inst)
+    v_rot =-dd.u*np.sin(angle_inst) + dd.v*np.cos(angle_inst)
+    # recalculate u_var_rot, v_var_rot
+    if detrend_stats:
+        uvar_rot = np.var(detrend(u_rot, axis=0, type="linear"), axis=(0,1,2))
+        dd_stat["u_var_rot"] = xr.DataArray(uvar_rot, dims=("z"), coords=dict(z=dd.z))
+        vvar_rot = np.var(detrend(v_rot, axis=0, type="linear"), axis=(0,1,2))
+        dd_stat["v_var_rot"] = xr.DataArray(vvar_rot, dims=("z"), coords=dict(z=dd.z))
+    else:
+        dd_stat["u_var_rot"] = u_rot.var(dim=("time", "x", "y"))
+        dd_stat["v_var_rot"] = v_rot.var(dim=("time", "x", "y"))
+    # --------------------------------
+    # Add attributes
+    # --------------------------------
+    # copy from dd
+    dd_stat.attrs = dd.attrs
+    dd_stat.attrs["delta"] = (dd.dx * dd.dy * dd.dz) ** (1./3.)
+    dd_stat.attrs["tavg"] = tavg
+    # --------------------------------
+    # Save output file
+    # --------------------------------
+    fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
+    print(f"Saving file: {fsave}")
+    with ProgressBar():
+        dd_stat.to_netcdf(fsave, mode="w")
+    print("Finished!")
+    return
