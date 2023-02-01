@@ -280,3 +280,153 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
         dd_stat.to_netcdf(fsave, mode="w")
     print("Finished!")
     return
+# ---------------------------------------------
+def load_stats(fstats, SBL=True, display=False):
+    """Reading function for average statistics files created from calc_stats()
+    Load netcdf files using xarray and calculate numerous relevant parameters
+    :param str fstats: absolute path to netcdf file for reading
+    :param bool SBL: denote whether sim data is SBL or not to calculate\
+        appropriate ABL depth etc.
+    :param bool display: print statistics from files, default=False
+    :return dd: xarray dataset
+    """
+    print(f"Reading file: {fstats}")
+    dd = xr.load_dataset(fstats)
+    # calculate ustar and h
+    dd["ustar"] = ((dd.uw_cov_tot**2.) + (dd.vw_cov_tot**2.)) ** 0.25
+    dd["ustar2"] = dd.ustar ** 2.
+    if SBL:
+        dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
+    else:
+        # CBL
+        dd["h"] = dd.z.isel(z=dd.tw_cov_tot.argmin())
+    # grab ustar0 and calc tstar0 for normalizing in plotting
+    dd["ustar0"] = dd.ustar.isel(z=0)
+    dd["tstar0"] = -dd.tw_cov_tot.isel(z=0)/dd.ustar0
+    # local thetastar
+    dd["tstar"] = -dd.tw_cov_tot / dd.ustar
+    # calculate TKE
+    dd["e"] = 0.5 * (dd.u_var + dd.v_var + dd.w_var)
+    # calculate Obukhov length L
+    dd["L"] = -(dd.ustar0**3) * dd.theta_mean.isel(z=0) / (0.4 * 9.81 * dd.tw_cov_tot.isel(z=0))
+    # calculate uh and wdir
+    dd["uh"] = np.sqrt(dd.u_mean**2. + dd.v_mean**2.)
+    dd["wdir"] = np.arctan2(-dd.u_mean, -dd.v_mean) * 180./np.pi
+    dd["wdir"] = dd.wdir.where(dd.wdir < 0.) + 360.
+    # calculate mean lapse rate between lowest grid point and z=h
+    delta_T = dd.theta_mean.sel(z=dd.h, method="nearest") - dd.theta_mean[0]
+    delta_z = dd.z.sel(z=dd.h, method="nearest") - dd.z[0]
+    dd["dT_dz"] = delta_T / delta_z
+    # calculate eddy turnover time TL
+    dd["TL"] = dd.h / dd.ustar0
+    dd["nTL"] = 3600. / dd.TL
+    # calculate MOST dimensionless functions phim, phih
+    kz = 0.4 * dd.z # kappa * z
+    dd["phim"] = (kz/dd.ustar) * np.sqrt(dd.u_mean.differentiate("z", 2)**2.+\
+                                         dd.v_mean.differentiate("z", 2)**2.)
+    dd["phih"] = (kz/dd.tstar) * dd.theta_mean.differentiate("z", 2)
+    # MOST stability parameter z/L
+    dd["zL"] = dd.z / dd.L
+    if SBL:
+        # calculate TKE-based sbl depth
+        dd["he"] = dd.z.where(dd.e <= 0.05*dd.e[0], drop=True)[0]
+        # calculate h/L as global stability parameter
+        dd["hL"] = dd.h / dd.L
+        # create string for labels from hL
+        dd.attrs["label3"] = f"$h/L = {{{dd.hL.values:3.2f}}}$"
+        # save number of points within sbl
+        dd.attrs["nzsbl"] = dd.z.where(dd.z <= dd.h, drop=True).size
+        # calculate Richardson numbers
+        # sqrt((du_dz**2) + (dv_dz**2))
+        dd["du_dz"] = np.sqrt(dd.u_mean.differentiate("z", 2)**2. +\
+                              dd.v_mean.differentiate("z", 2)**2.)
+        # Rig = N^2 / S^2
+        dd["N2"] = dd.theta_mean.differentiate("z", 2) * 9.81 / dd.theta_mean.isel(z=0)
+        # flag negative values of N^2
+        dd.N2[dd.N2 < 0.] = np.nan
+        dd["Rig"] = dd.N2 / dd.du_dz / dd.du_dz
+        # Rif = beta * w'theta' / (u'w' du/dz + v'w' dv/dz)
+        dd["Rif"] = (9.81/dd.theta_mean.isel(z=0)) * dd.tw_cov_tot /\
+                    (dd.uw_cov_tot*dd.u_mean.differentiate("z", 2) +\
+                     dd.vw_cov_tot*dd.v_mean.differentiate("z", 2))
+        # # bulk Richardson number Rib based on values at top of sbl and sfc
+        # dz = dd.z[dd.nzsbl] - dd.z[0]
+        # dTdz = (dd.theta_mean[dd.nzsbl] - dd.theta_mean[0]) / dz
+        # dUdz = (dd.u_mean[dd.nzsbl] - dd.u_mean[0]) / dz
+        # dVdz = (dd.v_mean[dd.nzsbl] - dd.v_mean[0]) / dz
+        # dd.attrs["Rib"] = (dTdz * 9.81 / dd.theta_mean[0]) / (dUdz**2. + dVdz**2.)
+        # calc Ozmidov scale real quick
+        dd["Lo"] = np.sqrt(-dd.dissip_mean / (dd.N2 ** (3./2.)))
+        # calculate Kolmogorov microscale: eta = (nu**3 / dissip) ** 0.25
+        dd["eta"] = ((1.14e-5)**3. / (-dd.dissip_mean)) ** 0.25
+        # calculate MOST dimensionless dissipation rate: kappa*z*epsilon/ustar^3
+        dd["phie"] = -1*dd.dissip_mean*kz / (dd.ustar**3.)
+        # calculate gradient scales from Sorbjan 2017, Greene et al. 2022
+        l0 = 19.22 # m
+        l1 = 1./(dd.Rig**(3./2.)).where(dd.z <= dd.h, drop=True)
+        kz = 0.4 * dd.z.where(dd.z <= dd.h, drop=True)
+        dd["Ls"] = kz / (1 + (kz/l0) + (kz/l1))
+        dd["Us"] = dd.Ls * np.sqrt(dd.N2)
+        dd["Ts"] = dd.Ls * dd.theta_mean.differentiate("z", 2)
+        # calculate local Obukhov length Lambda
+        dd["LL"] = -(dd.ustar**3.) * dd.theta_mean / (0.4 * 9.81 * dd.tw_cov_tot)
+        # calculate level of LLJ: zj
+        dd["zj"] = dd.z.isel(z=dd.uh.argmax())
+    # print table statistics
+    if display:
+        print(f"---{dd.stability}---")
+        print(f"u*: {dd.ustar0.values:4.3f} m/s")
+        print(f"theta*: {dd.tstar0.values:5.4f} K")
+        print(f"Q*: {1000*dd.tw_cov_tot.isel(z=0).values:4.3f} K m/s")
+        print(f"h: {dd.h.values:4.3f} m")
+        print(f"L: {dd.L.values:4.3f} m")
+        print(f"h/L: {(dd.h/dd.L).values:4.3f}")
+        # print(f"Rib: {dd.Rib.values:4.3f}")
+        print(f"zj/h: {(dd.z.isel(z=dd.uh.argmax())/dd.h).values:4.3f}")
+        print(f"dT/dz: {1000*dd.dT_dz.values:4.1f} K/km")
+        print(f"TL: {dd.TL.values:4.1f} s")
+        print(f"nTL: {dd.nTL.values:4.1f}")
+
+    return dd
+# ---------------------------------------------
+def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
+    """Reading function for multiple instantaneous volumetric netcdf files
+    Load netcdf files using xarray
+    :param str dnc: abs path directory for location of netcdf files
+    :param int t0: first timestep to process
+    :param int t1: last timestep to process
+    :param int dt: number of timesteps between files to load
+    :param float delta_t: dimensional timestep in simulation (seconds)
+    :param bool SBL: calculate SBL-specific parameters. defaulte=False
+    :param str stats: name of statistics file. default=None
+
+    :return dd: xarray dataset of 4d volumes
+    :return s: xarray dataset of statistics file
+    """
+    # load final hour of individual files into one dataset
+    # note this is specific for SBL simulations
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
+    # determine files to read from timesteps
+    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+    nf = len(fall)
+    # calculate array of times represented by each file
+    times = np.array([i*delta_t*dt for i in range(nf)])
+    # read files
+    print("Loading files...")
+    dd = xr.open_mfdataset(fall, combine="nested", concat_dim="time")
+    dd.coords["time"] = times
+    dd.time.attrs["units"] = "s"
+    if stats is not None:
+        # load stats file
+        s = load_stats(dnc+stats, SBL=SBL)
+        # calculate rotated u, v based on xy mean at each timestep
+        uxy = dd.u.mean(dim=("x","y"))
+        vxy = dd.v.mean(dim=("x","y"))
+        angle = np.arctan2(vxy, uxy)
+        dd["u_rot"] = dd.u*np.cos(angle) + dd.v*np.sin(angle)
+        dd["v_rot"] =-dd.u*np.sin(angle) + dd.v*np.cos(angle)
+        # return both dd and s
+        return dd, s
+    # just return dd if no SBL
+    return dd
+# ---------------------------------------------
