@@ -9,13 +9,10 @@
 # calculating commonly-used statistics
 # --------------------------------
 import os
-import sys
 import xrft
 import xarray as xr
 import numpy as np
-from numpy.fft import fft, ifft
 from scipy.signal import detrend
-from scipy.optimize import curve_fit
 from dask.diagnostics import ProgressBar
 # --------------------------------
 # Begin Defining Functions
