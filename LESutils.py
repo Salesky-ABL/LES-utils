@@ -403,8 +403,7 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
     :return dd: xarray dataset of 4d volumes
     :return s: xarray dataset of statistics file
     """
-    # load final hour of individual files into one dataset
-    # note this is specific for SBL simulations
+    # load individual files into one dataset
     timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
     # determine files to read from timesteps
     fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
@@ -427,6 +426,157 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
         dd["v_rot"] =-dd.u*np.sin(angle) + dd.v*np.cos(angle)
         # return both dd and s
         return dd, s
-    # just return dd if no SBL
+    # just return dd if no stats
     return dd
 # ---------------------------------------------
+def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
+    """Load raw timeseries data at each level and combine into single
+    netcdf file with dimensions (time, z)
+    :param str dout: absolute path to directory with LES output binary files
+    :param str dnc: absolute path to directory for saving output netCDF files
+    :param tuple<Quantity> scales: dimensional scales from LES code\
+        (uscale, Tscale)
+    :param float delta_t: dimensional timestep in simulation (seconds)
+    :param int nz: resolution of simulation in vertical
+    :param float Lz: height of domain in m
+    :param float nhr: number of hours to load, counting backwards from end
+    :param int tf: final timestep in file
+    :param str simlabel: unique identifier for batch of files
+    """
+    # grab relevent parameters
+    u_scale, theta_scale = scales
+    dz = Lz/nz
+    # define z array
+    # u- and w-nodes are staggered
+    # zw = 0:Lz:nz
+    # zu = dz/2:Lz-dz/2:nz-1
+    # interpolate w, txz, tyz, q3 to u grid
+    zw = np.linspace(0., Lz, nz)
+    zu = np.linspace(dz/2., Lz+dz/2., nz)
+    # determine number of hours to process from tavg
+    nt = int(nhr*3600./delta_t)
+    istart = tf - nt
+    # define array of time in seconds
+    time = np.linspace(0., nhr*3600.-delta_t, nt, dtype=np.float64)
+    print(f"Loading {nt} timesteps = {nhr} for simulation {simlabel}")
+    # define DataArrays for u, v, w, theta, txz, tyz, q3
+    # shape(nt,nz)
+    # u, v, theta
+    u_ts, v_ts, theta_ts =\
+    (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
+                  dims=("t", "z"), coords=dict(t=time, z=zu)) for _ in range(3))
+    # w, txz, tyz, q3
+    w_ts, txz_ts, tyz_ts, q3_ts =\
+    (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
+                  dims=("t", "z"), coords=dict(t=time, z=zw)) for _ in range(4))
+    # now loop through each file (one for each jz)
+    for jz in range(nz):
+        print(f"Loading timeseries data, jz={jz}")
+        fu = f"{dout}u_timeseries_c{jz:03d}.out"
+        u_ts[:,jz] = np.loadtxt(fu, skiprows=istart, usecols=1)
+        fv = f"{dout}v_timeseries_c{jz:03d}.out"
+        v_ts[:,jz] = np.loadtxt(fv, skiprows=istart, usecols=1)
+        fw = f"{dout}w_timeseries_c{jz:03d}.out"
+        w_ts[:,jz] = np.loadtxt(fw, skiprows=istart, usecols=1)
+        ftheta = f"{dout}t_timeseries_c{jz:03d}.out"
+        theta_ts[:,jz] = np.loadtxt(ftheta, skiprows=istart, usecols=1)
+        ftxz = f"{dout}txz_timeseries_c{jz:03d}.out"
+        txz_ts[:,jz] = np.loadtxt(ftxz, skiprows=istart, usecols=1)
+        ftyz = f"{dout}tyz_timeseries_c{jz:03d}.out"
+        tyz_ts[:,jz] = np.loadtxt(ftyz, skiprows=istart, usecols=1)
+        fq3 = f"{dout}q3_timeseries_c{jz:03d}.out"
+        q3_ts[:,jz] = np.loadtxt(fq3, skiprows=istart, usecols=1)
+    # apply scales
+    u_ts *= u_scale
+    v_ts *= u_scale
+    w_ts *= u_scale
+    theta_ts *= theta_scale
+    txz_ts *= (u_scale * u_scale)
+    tyz_ts *= (u_scale * u_scale)
+    q3_ts *= (u_scale * theta_scale)
+    # define dictionary of attributes
+    attrs = {"label": simlabel, "dt": delta_t, "nt": nt, "nz": nz, "total_time": nhr}
+    # combine DataArrays into Dataset and save as netcdf
+    # initialize empty Dataset
+    ts_all = xr.Dataset(data_vars=None, coords=dict(t=time, z=zu), attrs=attrs)
+    # now store
+    ts_all["u"] = u_ts
+    ts_all["v"] = v_ts
+    ts_all["w"] = w_ts.interp(z=zu, method="linear", 
+                              kwargs={"fill_value": "extrapolate"})
+    ts_all["theta"] = theta_ts
+    ts_all["txz"] = txz_ts.interp(z=zu, method="linear", 
+                                  kwargs={"fill_value": "extrapolate"})
+    ts_all["tyz"] = tyz_ts.interp(z=zu, method="linear", 
+                                  kwargs={"fill_value": "extrapolate"})
+    ts_all["q3"] = q3_ts.interp(z=zu, method="linear", 
+                                kwargs={"fill_value": "extrapolate"})
+    # save to netcdf
+    fsave_ts = f"{dnc}timeseries_all_{nhr}h.nc"
+    with ProgressBar():
+        ts_all.to_netcdf(fsave_ts, mode="w")
+        
+    print(f"Finished saving timeseries for simulation {simlabel}")
+
+    return
+# ---------------------------------------------
+def load_timeseries(dnc, detrend=True, tavg="1h"):
+    """Reading function for timeseries files created from timseries2netcdf()
+    Load netcdf files using xarray and calculate numerous relevant parameters
+    :param str dnc: path to netcdf directory for simulation
+    :param bool detrend: detrend timeseries for calculating variances, default=True
+    :param str tavg: select which timeseries file to use in hours, default="1h"
+    :return d: xarray dataset
+    """
+    # load timeseries data
+    fts = f"timeseries_all_{tavg}.nc"
+    d = xr.open_dataset(dnc+fts)
+    # calculate means
+    for v in ["u", "v", "w", "theta"]:
+        d[f"{v}_mean"] = d[v].mean("t") # average in time
+    # rotate coords so <v> = 0
+    angle = np.arctan2(d.v_mean, d.u_mean)
+    d["u_mean_rot"] = d.u_mean*np.cos(angle) + d.v_mean*np.sin(angle)
+    d["v_mean_rot"] =-d.u_mean*np.sin(angle) + d.v_mean*np.cos(angle)
+    # rotate instantaneous u and v
+    d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+    d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+    # calculate "inst" vars
+    if detrend:
+        ud = xrft.detrend(d.u, dim="t", detrend_type="linear")
+        udr = xrft.detrend(d.u_rot, dim="t", detrend_type="linear")
+        vd = xrft.detrend(d.v, dim="t", detrend_type="linear")
+        vdr = xrft.detrend(d.v_rot, dim="t", detrend_type="linear")
+        wd = xrft.detrend(d.w, dim="t", detrend_type="linear")
+        td = xrft.detrend(d.theta, dim="t", detrend_type="linear")
+        # store these detrended variables
+        d["ud"] = ud
+        d["udr"] = udr
+        d["vd"] = vd
+        d["vdr"] = vdr
+        d["wd"] = wd
+        d["td"] = td
+        # now calculate vars
+        d["uu"] = ud * ud
+        d["uur"] = udr * udr
+        d["vv"] = vd * vd
+        d["vvr"] = vdr * vdr
+        d["ww"] = wd * wd
+        d["tt"] = td * td
+        # calculate "inst" covars
+        d["uw"] = (ud * wd) + d.txz
+        d["vw"] = (vd * wd) + d.tyz
+        d["tw"] = (td * wd) + d.q3
+    else:
+        d["uu"] = (d.u - d.u_mean) * (d.u - d.u_mean)
+        d["uur"] = (d.u_rot - d.u_mean_rot) * (d.u_rot - d.u_mean_rot)
+        d["vv"] = (d.v - d.v_mean) * (d.v - d.v_mean)
+        d["vvr"] = (d.v_rot - d.v_mean_rot) * (d.v_rot - d.v_mean_rot)
+        d["ww"] = (d.w - d.w_mean) * (d.w - d.w_mean)
+        d["tt"] = (d.theta - d.theta_mean) * (d.theta - d.theta_mean)
+        # calculate "inst" covars
+        d["uw"] = (d.u - d.u_mean) * (d.w - d.w_mean) + d.txz
+        d["vw"] = (d.v - d.v_mean) * (d.w - d.w_mean) + d.tyz
+        d["tw"] = (d.theta - d.theta_mean) * (d.w - d.w_mean) + d.q3
+    
+    return d
