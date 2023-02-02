@@ -12,10 +12,11 @@ import xarray as xr
 import numpy as np
 from numpy.fft import fft, ifft
 from dask.diagnostics import ProgressBar
+from scipy.signal import detrend
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
-def autocorr_1d(dnc, df):
+def autocorr_1d(dnc, df, detrend=False):
     """Input 4D xarray Dataset with loaded LES data to calculate
     autocorrelation function along x-direction, then average in
     y and time. Calculate for u, v, w, theta, u_rot, v_rot.
@@ -23,6 +24,8 @@ def autocorr_1d(dnc, df):
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
+    :param bool detrend: linear detrend along x-axis before processing,\
+        default=False
     """
     # variables to loop over for calculations
     vall = ["u", "v", "w", "theta", "u_rot", "v_rot"]
@@ -38,7 +41,12 @@ def autocorr_1d(dnc, df):
             # empty PSD array
             PSD = np.zeros((df.nx, df.ny, df.nz), dtype=np.float64)
             # grab data for processing
-            d = df[v].isel(time=jt).to_numpy()
+            din = df[v].isel(time=jt).to_numpy()
+            # detrend
+            if detrend:
+                d = detrend(din, axis=0, type="linear")
+            else:
+                d = din
             # forward FFT
             f = fft(d, axis=0)
             # calculate PSD
