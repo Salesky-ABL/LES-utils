@@ -67,6 +67,8 @@ def autocorr_1d(dnc, df, detrend_first=False):
     # construct Dataset to save
     Rsave = xr.Dataset(data_vars=None, coords=dict(x=df.x, z=df.z), 
                        attrs=df.attrs)
+    # add additional attr for detrend_first
+    Rsave.attrs["detrend_first"] = detrend_first
     # loop over vars in vall and store
     for v in vall:
         Rsave[v] = xr.DataArray(data=acf_all[v], dims=("x","z"), 
