@@ -16,7 +16,7 @@ from scipy.signal import detrend
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
-def autocorr_1d(dnc, df, detrend=False):
+def autocorr_1d(dnc, df, detrend_first=False):
     """Input 4D xarray Dataset with loaded LES data to calculate
     autocorrelation function along x-direction, then average in
     y and time. Calculate for u, v, w, theta, u_rot, v_rot.
@@ -24,7 +24,7 @@ def autocorr_1d(dnc, df, detrend=False):
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
-    :param bool detrend: linear detrend along x-axis before processing,\
+    :param bool detrend_first: linear detrend along x-axis before processing,\
         default=False
     """
     # variables to loop over for calculations
@@ -43,7 +43,7 @@ def autocorr_1d(dnc, df, detrend=False):
             # grab data for processing
             din = df[v].isel(time=jt).to_numpy()
             # detrend
-            if detrend:
+            if detrend_first:
                 d = detrend(din, axis=0, type="linear")
             else:
                 d = din
