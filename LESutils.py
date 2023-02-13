@@ -278,12 +278,12 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
     print("Finished!")
     return
 # ---------------------------------------------
-def load_stats(fstats, SBL=True, display=False):
+def load_stats(fstats, SBL=False, display=False):
     """Reading function for average statistics files created from calc_stats()
     Load netcdf files using xarray and calculate numerous relevant parameters
     :param str fstats: absolute path to netcdf file for reading
     :param bool SBL: denote whether sim data is SBL or not to calculate\
-        appropriate ABL depth etc.
+        appropriate ABL depth etc., default=False
     :param bool display: print statistics from files, default=False
     :return dd: xarray dataset
     """
@@ -297,6 +297,8 @@ def load_stats(fstats, SBL=True, display=False):
     else:
         # CBL
         dd["h"] = dd.z.isel(z=dd.tw_cov_tot.argmin())
+    # save number of points within abl (z <= h)
+    dd.attrs["nzabl"] = dd.z.where(dd.z <= dd.h, drop=True).size
     # grab ustar0 and calc tstar0 for normalizing in plotting
     dd["ustar0"] = dd.ustar.isel(z=0)
     dd["tstar0"] = -dd.tw_cov_tot.isel(z=0)/dd.ustar0
@@ -331,8 +333,6 @@ def load_stats(fstats, SBL=True, display=False):
         dd["hL"] = dd.h / dd.L
         # create string for labels from hL
         dd.attrs["label3"] = f"$h/L = {{{dd.hL.values:3.2f}}}$"
-        # save number of points within sbl
-        dd.attrs["nzsbl"] = dd.z.where(dd.z <= dd.h, drop=True).size
         # calculate Richardson numbers
         # sqrt((du_dz**2) + (dv_dz**2))
         dd["du_dz"] = np.sqrt(dd.u_mean.differentiate("z", 2)**2. +\
