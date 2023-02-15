@@ -577,3 +577,5 @@ def load_timeseries(dnc, detrend=True, tavg="1h"):
         d["tw"] = (d.theta - d.theta_mean) * (d.w - d.w_mean) + d.q3
     
     return d
+
+"""Added a bunch of text here to see if the updates are carried through"""
