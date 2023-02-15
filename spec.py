@@ -45,16 +45,13 @@ def autocorr_1d(dnc, df, detrend_first=False):
             # detrend
             if detrend_first:
                 d = detrend(din, axis=0, type="linear")
+                d /= d.std(axis=0)
             else:
-                d = din
+                d = (din - din.mean(axis=0)) / d.std(axis=0)
             # forward FFT
             f = fft(d, axis=0)
             # calculate PSD
-            for jx in range(1, df.nx//2):
-                PSD[jx,:,:] = np.real( f[jx,:,:] * np.conj(f[jx,:,:]) )
-                PSD[df.nx-jx,:,:] = np.real( f[df.nx-jx,:,:] * np.conj(f[df.nx-jx,:,:]) )
-            # normalize by variance
-            PSD /= np.var(d, axis=0)
+            PSD = np.abs(f) ** 2.
             # ifft to get acf
             R = np.real( ifft(PSD, axis=0) ) / df.nx
             # calculate mean along y-axis and assign to acf_all
