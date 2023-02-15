@@ -671,3 +671,60 @@ def UASprofile(ts, zmax=2000., err=None, ascent_rate=3.0, time_average=3.0, time
         uas_mean["theta_err"] = err.theta.interp(z=uas_mean.z)
 
     return uas_mean
+# ---------------------------------------------
+def ec_tow(ts, h, time_average=1800.0, time_start=0.0):
+    """Emulate a tower extending throughout ABL with EC system at each vertical
+    gridpoint and calculate variances and covariances
+    :param xr.Dataset ts: dataset with virtual tower data to construct UAS prof
+    :param float h: ABL depth in m
+    :param float time_average: time range in s to avg timeseries; default=1800
+    :param float time_start: when to initialize averaging; default=0.0
+    :param bool quicklook: flag to make quicklook of raw vs averaged profiles
+    Outputs new xarray Dataset with emulated vars and covars
+    """
+    # check if time_average is an array or single value and convert to iterable
+    if np.shape(time_average) == ():
+        time_average = np.array([time_average])
+    else:
+        time_average = np.array(time_average)
+    # initialize empty dataset to hold everything
+    ec_ = xr.Dataset(data_vars=None, coords=dict(z=ts.z, Tsample_ec=time_average))
+    # loop through variable names to initialize empty DataArrays
+    for v in ["uw_cov_tot","vw_cov_tot", "tw_cov_tot", "ustar2", 
+              "u_var", "v_var", "w_var", "theta_var",
+              "u_var_rot", "v_var_rot", "e"]:
+        ec_[v] = xr.DataArray(data=np.zeros((len(ts.z), len(time_average)), 
+                                            dtype=np.float64),
+                              coords=dict(z=ts.z, Tsample_ec=time_average))
+    # loop over time_average to calculate ec stats
+    for jt, iT in enumerate(time_average):
+        # first find the index in df.t that corresponds to time_start
+        istart = int(time_start / ts.dt)
+        # determine how many indices to use from time_average
+        nuse = int(iT / ts.dt)
+        # create array of indices to use
+        iuse = np.linspace(istart, istart+nuse-1, nuse, dtype=np.int32)
+        # begin calculating statistics
+        # use the detrended stats from load_timeseries
+        # u'w'
+        ec_["uw_cov_tot"][:,jt] = ts.uw.isel(t=iuse).mean("t")
+        # v'w'
+        ec_["vw_cov_tot"][:,jt] = ts.vw.isel(t=iuse).mean("t")
+        # theta'w'
+        ec_["tw_cov_tot"][:,jt] = ts.tw.isel(t=iuse).mean("t")
+        # ustar^2 = sqrt(u'w'^2 + v'w'^2)
+        ec_["ustar2"][:,jt] = ((ec_.uw_cov_tot[:,jt]**2.) + (ec_.vw_cov_tot[:,jt]**2.)) ** 0.5
+        # variances
+        ec_["u_var"][:,jt] = ts.uu.isel(t=iuse).mean("t")
+        ec_["u_var_rot"][:,jt] = ts.uur.isel(t=iuse).mean("t")
+        ec_["v_var"][:,jt] = ts.vv.isel(t=iuse).mean("t")
+        ec_["v_var_rot"][:,jt] = ts.vvr.isel(t=iuse).mean("t")
+        ec_["w_var"][:,jt] = ts.ww.isel(t=iuse).mean("t")
+        ec_["theta_var"][:,jt] = ts.tt.isel(t=iuse).mean("t")
+        # calculate TKE
+        ec_["e"][:,jt] = 0.5 * (ec_.u_var.isel(Tsample_ec=jt) +\
+                                ec_.v_var.isel(Tsample_ec=jt) +\
+                                ec_.w_var.isel(Tsample_ec=jt))
+    
+    # only return ec where z <= h
+    return ec_.where(ec_.z <= h, drop=True)
