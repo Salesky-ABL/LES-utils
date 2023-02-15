@@ -12,6 +12,7 @@ import os
 import xrft
 import xarray as xr
 import numpy as np
+from numba import njit
 from scipy.signal import detrend
 from dask.diagnostics import ProgressBar
 # --------------------------------
@@ -455,7 +456,7 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
     istart = tf - nt
     # define array of time in seconds
     time = np.linspace(0., nhr*3600.-delta_t, nt, dtype=np.float64)
-    print(f"Loading {nt} timesteps = {nhr} for simulation {simlabel}")
+    print(f"Loading {nt} timesteps = {nhr} hr for simulation {simlabel}")
     # define DataArrays for u, v, w, theta, txz, tyz, q3
     # shape(nt,nz)
     # u, v, theta
@@ -517,7 +518,7 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
 
     return
 # ---------------------------------------------
-def load_timeseries(dnc, detrend=True, tavg="1h"):
+def load_timeseries(dnc, detrend=True, tavg="1.0h"):
     """Reading function for timeseries files created from timseries2netcdf()
     Load netcdf files using xarray and calculate numerous relevant parameters
     :param str dnc: path to netcdf directory for simulation
@@ -577,3 +578,96 @@ def load_timeseries(dnc, detrend=True, tavg="1h"):
         d["tw"] = (d.theta - d.theta_mean) * (d.w - d.w_mean) + d.q3
     
     return d
+# ---------------------------------------------
+@njit
+def interp_uas(dat, z_LES, z_UAS):
+    """Interpolate LES virtual tower timeseries data in the vertical to match
+    ascent rate of emulated UAS to create timeseries of ascent data
+    :param float dat: 2d array of the field to interpolate, shape(nt, nz)
+    :param float z_LES: 1d array of LES grid point heights
+    :param float z_UAS: 1d array of new UAS z from ascent & sampling rates
+    Outputs 2d array of interpolated field, shape(nt, len(z_UAS))
+    """
+    nt = np.shape(dat)[0]
+    nz = len(z_UAS)
+    dat_interp = np.zeros((nt, nz), dtype=np.float64)
+    for i in range(nt):
+        dat_interp[i,:] = np.interp(z_UAS, z_LES, dat[i,:])
+    return dat_interp
+# ---------------------------------------------
+def UASprofile(ts, zmax=2000., err=None, ascent_rate=3.0, time_average=3.0, time_start=0.0):
+    """Emulate a vertical profile from a rotary-wing UAS sampling through a
+    simulated ABL with chosen constant ascent rate and time averaging
+    :param xr.Dataset ts: timeseries data from virtual tower created by
+        timeseries2netcdf()
+    :param float zmax: maximum height within domain to consider in m, 
+        default=2000.
+    :param xr.Dataset err: profile of errors to accompany emulated
+        measurements, default=None
+    :param float ascent_rate: ascent rate of UAS in m/s, default=3.0
+    :param float time_average: averaging time bins in s, default=3.0
+    :param float time_start: when to initialize ascending profile
+        in s, default=0.0
+    Returns new xarray Dataset with emulated profile
+    """
+    # First, calculate array of theoretical altitudes based on the base time
+    # vector and ascent_rate while keeping account for time_start
+    zuas = ascent_rate * ts.t.values
+    # find the index in ts.time that corresponds to time_start
+    istart = int(time_start / ts.dt)
+    # set zuas[:istart] = 0 and then subtract everything after that
+    zuas[:istart] = 0
+    zuas[istart:] -= zuas[istart]
+    # now only grab indices where 1 m <= zuas <= zmax
+    iuse = np.where((zuas >= 1.) & (zuas <= zmax))[0]
+    zuas = zuas[iuse]
+    # calculate dz_uas from ascent_rate and time_average
+    dz_uas = ascent_rate * time_average
+    # loop over keys and interpolate
+    interp_keys = ["u", "v", "theta"]
+    d_interp = {} # define empty dictionary for looping
+    for key in interp_keys:
+        print(f"Interpolating {key}...")
+        d_interp[key] = interp_uas(ts[key].isel(t=iuse).values,
+                                   ts.z.values, zuas)
+
+    # grab data from interpolated arrays to create simulated raw UAS profiles
+    # define xarray dataset to eventually store all
+    uas_raw = xr.Dataset(data_vars=None, coords=dict(z=zuas))
+    # begin looping through keys
+    for key in interp_keys:
+        # define empty list
+        duas = []
+        # loop over altitudes/times
+        for i in range(len(iuse)):
+            duas.append(d_interp[key][i,i])
+        # assign to uas_raw
+        uas_raw[key] = xr.DataArray(data=np.array(duas), coords=dict(z=zuas))
+    
+    # emulate post-processing and average over altitude bins
+    # can do this super easily with xarray groupby_bins
+    # want bins to be at the midpoint between dz_uas grid
+    zbin = np.arange(dz_uas/2, zmax-dz_uas/2, dz_uas)
+    # group by altitude bins and calculate mean in one line
+    uas_mean = uas_raw.groupby_bins("z", zbin).mean("z", skipna=True)
+    # fix z coordinates: swap z_bins out for dz_uas grid
+    znew = np.arange(dz_uas, zmax-dz_uas, dz_uas)
+    # create new coordinate "z" from znew that is based on z_bins, then swap and drop
+    uas_mean = uas_mean.assign_coords({"z": ("z_bins", znew)}).swap_dims({"z_bins": "z"})
+    # # only save data for z <= h
+    # h = err.z.max()
+    # uas_mean = uas_mean.where(uas_mean.z <= h, drop=True)
+    # calculate wspd, wdir from uas_mean profile
+    uas_mean["wspd"] = (uas_mean.u**2. + uas_mean.v**2.) ** 0.5
+    wdir = np.arctan2(-uas_mean.u, -uas_mean.v) * 180./np.pi
+    wdir[wdir < 0.] += 360.
+    uas_mean["wdir"] = wdir
+    #
+    # interpolate errors for everything in uas_mean
+    #
+    if err is not None:
+        uas_mean["wspd_err"] = err.uh.interp(z=uas_mean.z)
+        uas_mean["wdir_err"] = err.alpha.interp(z=uas_mean.z)
+        uas_mean["theta_err"] = err.theta.interp(z=uas_mean.z)
+
+    return uas_mean
