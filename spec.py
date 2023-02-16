@@ -45,7 +45,7 @@ def autocorr_1d(dnc, df, detrend_first=False):
                 d = detrend(din, axis=0, type="linear")
                 d /= d.std(axis=0)
             else:
-                d = (din - din.mean(axis=0)) / d.std(axis=0)
+                d = (din - din.mean(axis=0)) / din.std(axis=0)
             # forward FFT
             f = fft(d, axis=0)
             # calculate PSD
@@ -101,7 +101,7 @@ def autocorr_2d(dnc, df):
             # grab data for processing
             din = df[v].isel(time=jt).to_numpy()
             # normalize
-            d = (din - din.mean(axis=(0,1))) / d.std(axis=(0,1))
+            d = (din - din.mean(axis=(0,1))) / din.std(axis=(0,1))
             # forward FFT
             f = fft2(d, axes=(0,1))
             # calculate PSD
