@@ -20,7 +20,7 @@ def autocorr_1d(dnc, df, detrend_first=False):
     """Input 4D xarray Dataset with loaded LES data to calculate
     autocorrelation function along x-direction, then average in
     y and time. Calculate for u, v, w, theta, u_rot, v_rot.
-    Save netcdf file in dnc.
+    Save netcdf file in dnc. Only output positive lags in x.
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
@@ -60,13 +60,15 @@ def autocorr_1d(dnc, df, detrend_first=False):
         acf_all[v] /= df.time.size
 
     # construct Dataset to save
-    Rsave = xr.Dataset(data_vars=None, coords=dict(x=df.x, z=df.z), 
+    Rsave = xr.Dataset(data_vars=None, 
+                       coords=dict(x=df.x[:df.nx//2], z=df.z), 
                        attrs=df.attrs)
     # add additional attr for detrend_first
-    Rsave.attrs["detrend_first"] = detrend_first
+    Rsave.attrs["detrend_first"] = str(detrend_first)
     # loop over vars in vall and store
     for v in vall:
-        Rsave[v] = xr.DataArray(data=acf_all[v], dims=("x","z"), 
+        Rsave[v] = xr.DataArray(data=acf_all[v][:df.nx//2,:], 
+                                dims=("x", "z"), 
                                 coords=dict(x=Rsave.x, z=Rsave.z))
     
     # save nc file
@@ -82,7 +84,7 @@ def autocorr_2d(dnc, df):
     """Input 4D xarray Dataset with loaded LES data to calculate
     2d autocorrelation function in x-y planes, then average in
     time. Calculate for u, v, w, theta, u_rot, v_rot.
-    Save netcdf file in dnc.
+    Save netcdf file in dnc. Only output positive lags in x and y.
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
@@ -107,7 +109,7 @@ def autocorr_2d(dnc, df):
             # calculate PSD
             PSD = np.abs(f) ** 2.
             # ifft to get acf
-            R = np.real( ifft(PSD, axes=(0,1)) ) / df.nx / df.ny
+            R = np.real( ifft2(PSD, axes=(0,1)) ) / df.nx / df.ny
             # calculate mean along y-axis and assign to acf_all
             acf_all[v] += R
     
@@ -116,11 +118,15 @@ def autocorr_2d(dnc, df):
         acf_all[v] /= df.time.size
 
     # construct Dataset to save
-    Rsave = xr.Dataset(data_vars=None, coords=dict(x=df.x, y=df.y, z=df.z), 
+    Rsave = xr.Dataset(data_vars=None, 
+                       coords=dict(x=df.x[:df.nx//2], 
+                                   y=df.y[:df.ny//2], 
+                                   z=df.z), 
                        attrs=df.attrs)
     # loop over vars in vall and store
     for v in vall:
-        Rsave[v] = xr.DataArray(data=acf_all[v], dims=("x","y","z"), 
+        Rsave[v] = xr.DataArray(data=acf_all[v][:df.nx//2,:df.ny//2,:],
+                                dims=("x", "y", "z"), 
                                 coords=dict(x=Rsave.x, y=Rsave.y, z=Rsave.z))
     
     # save nc file
