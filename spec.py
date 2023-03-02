@@ -21,7 +21,7 @@ def autocorr_1d(dnc, df, detrend="constant"):
     """Input 4D xarray Dataset with loaded LES data to calculate
     autocorrelation function along x-direction, then average in
     y and time. Calculate for u, v, w, theta, u_rot, v_rot.
-    Save netcdf file in dnc. Only output positive lags in x.
+    Save netcdf file in dnc.
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
@@ -46,9 +46,11 @@ def autocorr_1d(dnc, df, detrend="constant"):
         # normalize by standard deviation
         dnorm = dfluc / dfluc.std(dim="x")
         # calculate PSD using xrft
-        PSD = xrft.power_spectrum(dnorm, dim="x", true_phase=True, true_amplitude=True)
+        PSD = xrft.power_spectrum(dnorm, dim="x", true_phase=True, 
+                                  true_amplitude=True)
         # take real part of ifft to return ACF
-        R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, lag=0).real
+        R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, 
+                      lag=0).real
         # average in y and time
         R_ytavg = R.mean(dim=("y","time"))
         # store in Rsave
@@ -60,57 +62,43 @@ def autocorr_1d(dnc, df, detrend="constant"):
     with ProgressBar():
         Rsave.to_netcdf(fsave, mode="w")
     
-    print("Finished computing autocorrelation functions!")
+    print("Finished computing 1d autocorrelation functions!")
     return
 # --------------------------------
-def autocorr_2d(dnc, df):
+def autocorr_2d(dnc, df, timeavg=True):
     """Input 4D xarray Dataset with loaded LES data to calculate
     2d autocorrelation function in x-y planes, then average in
-    time. Calculate for u, v, w, theta, u_rot, v_rot.
-    Save netcdf file in dnc. Only output positive lags in x and y.
+    time (if desired). Calculate for u, v, w, theta, u_rot, v_rot.
+    Save netcdf file in dnc.
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
+    :param bool timeavg: flag to average acf in time, default=True
     """
+    # construct Dataset to save
+    Rsave = xr.Dataset(data_vars=None, attrs=df.attrs)
     # variables to loop over for calculations
     vall = ["u", "v", "w", "theta", "u_rot", "v_rot"]
-    # define dictionary of empty arrays to store data
-    acf_all = {}
-    for v in vall:
-        acf_all[v] = np.zeros((df.nx, df.ny, df.nz), dtype=np.float64)
 
-    # BIG LOOP over time
-    for jt in range(df.time.size):
-        # loop over variables
-        for v in vall:
-            # grab data for processing
-            din = df[v].isel(time=jt).to_numpy()
-            # normalize
-            d = (din - din.mean(axis=(0,1))) / din.std(axis=(0,1))
-            # forward FFT
-            f = fft2(d, axes=(0,1))
-            # calculate PSD
-            PSD = np.abs(f) ** 2.
-            # ifft to get acf
-            R = np.real( ifft2(PSD, axes=(0,1)) ) / df.nx / df.ny
-            # calculate mean along y-axis and assign to acf_all
-            acf_all[v] += R
-    
-    # loop over vall and normalize by nt to get time average
+    # loop over variables
     for v in vall:
-        acf_all[v] /= df.time.size
-
-    # construct Dataset to save
-    Rsave = xr.Dataset(data_vars=None, 
-                       coords=dict(x=df.x[:df.nx//2], 
-                                   y=df.y[:df.ny//2], 
-                                   z=df.z), 
-                       attrs=df.attrs)
-    # loop over vars in vall and store
-    for v in vall:
-        Rsave[v] = xr.DataArray(data=acf_all[v][:df.nx//2,:df.ny//2,:],
-                                dims=("x", "y", "z"), 
-                                coords=dict(x=Rsave.x, y=Rsave.y, z=Rsave.z))
+        # grab data
+        din = df[v]
+        # subtract x,y mean
+        dfluc = xrft.detrend(din, dim=("x","y"), detrend_type="constant")
+        # normalize by standard deviation
+        dnorm = dfluc / dfluc.std(dim=("x","y"))
+        # calculate PSD using xrft
+        PSD = xrft.power_spectrum(dnorm, dim=("x","y"), true_phase=True, 
+                                  true_amplitude=True)
+        # take real part of ifft to return ACF
+        R = xrft.ifft(PSD, dim=("freq_x","freq_y"), true_phase=True, 
+                      true_amplitude=True, lag=(0,0)).real
+        # average in time if desired, then store in Rsave
+        if timeavg:
+            Rsave[v] = R.mean(dim=("time"))
+        else:
+            Rsave[v] = R
     
     # save nc file
     fsave = f"{dnc}R_2d.nc"
@@ -118,5 +106,5 @@ def autocorr_2d(dnc, df):
     with ProgressBar():
         Rsave.to_netcdf(fsave, mode="w")
     
-    print("Finished computing autocorrelation functions!")
+    print("Finished computing 2d autocorrelation functions!")
     return
