@@ -270,7 +270,7 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
         dd_stat["thetav_mean"] = tv.mean(dim=("time","x","y"))
         # tvw_cov_tot from tw_cov_tot and qw_cov_tot
         dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
-            0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot
+            0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
     # calculate vars
     for s in base1:
         if detrend_stats:
