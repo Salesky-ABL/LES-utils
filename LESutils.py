@@ -479,13 +479,14 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
     # just return dd if no stats
     return dd
 # ---------------------------------------------
-def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
+def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlabel):
     """Load raw timeseries data at each level and combine into single
     netcdf file with dimensions (time, z)
     :param str dout: absolute path to directory with LES output binary files
     :param str dnc: absolute path to directory for saving output netCDF files
     :param tuple<Quantity> scales: dimensional scales from LES code\
-        (uscale, Tscale)
+        (uscale, Tscale, qscale)
+    :param bool use_q: flag to use specific humidity q
     :param float delta_t: dimensional timestep in simulation (seconds)
     :param int nz: resolution of simulation in vertical
     :param float Lz: height of domain in m
@@ -494,7 +495,10 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
     :param str simlabel: unique identifier for batch of files
     """
     # grab relevent parameters
-    u_scale, theta_scale = scales
+    u_scale = scales[0]
+    theta_scale = scales[1]
+    if use_q:
+        q_scale = scales[2]
     dz = Lz/nz
     # define z array
     # u- and w-nodes are staggered
@@ -511,14 +515,14 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
     print(f"Loading {nt} timesteps = {nhr} hr for simulation {simlabel}")
     # define DataArrays for u, v, w, theta, txz, tyz, q3
     # shape(nt,nz)
-    # u, v, theta
-    u_ts, v_ts, theta_ts =\
+    # u, v, theta, q, thetav
+    u_ts, v_ts, theta_ts, q_ts, thetav_ts =\
     (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
-                  dims=("t", "z"), coords=dict(t=time, z=zu)) for _ in range(3))
-    # w, txz, tyz, q3
-    w_ts, txz_ts, tyz_ts, q3_ts =\
+                  dims=("t", "z"), coords=dict(t=time, z=zu)) for _ in range(5))
+    # w, txz, tyz, q3, wq_sgs
+    w_ts, txz_ts, tyz_ts, q3_ts, wq_sgs_ts =\
     (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
-                  dims=("t", "z"), coords=dict(t=time, z=zw)) for _ in range(4))
+                  dims=("t", "z"), coords=dict(t=time, z=zw)) for _ in range(5))
     # now loop through each file (one for each jz)
     for jz in range(nz):
         print(f"Loading timeseries data, jz={jz}")
@@ -536,6 +540,14 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
         tyz_ts[:,jz] = np.loadtxt(ftyz, skiprows=istart, usecols=1)
         fq3 = f"{dout}q3_timeseries_c{jz:03d}.out"
         q3_ts[:,jz] = np.loadtxt(fq3, skiprows=istart, usecols=1)
+        # load q
+        if use_q:
+            fq = f"{dout}q_timeseries_c{jz:03d}.out"
+            q_ts[:,jz] = np.loadtxt(fq, skiprows=istart, usecols=1)
+            ftv = f"{dout}tv_timeseries_c{jz:03d}.out"
+            thetav_ts[:,jz] = np.loadtxt(ftv, skiprows=istart, usecols=1)
+            fqw = f"{dout}wq_sgs_timeseries_c{jz:03d}.out"
+            wq_sgs_ts[:,jz] = np.loadtxt(fqw, skiprows=istart, usecols=1)
     # apply scales
     u_ts *= u_scale
     v_ts *= u_scale
@@ -544,6 +556,10 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
     txz_ts *= (u_scale * u_scale)
     tyz_ts *= (u_scale * u_scale)
     q3_ts *= (u_scale * theta_scale)
+    if use_q:
+        q_ts *= q_scale
+        thetav_ts *= theta_scale
+        wq_sgs_ts *= (u_scale * q_scale)
     # define dictionary of attributes
     attrs = {"label": simlabel, "dt": delta_t, "nt": nt, "nz": nz, "total_time": nhr}
     # combine DataArrays into Dataset and save as netcdf
@@ -561,6 +577,11 @@ def timeseries2netcdf(dout, dnc, scales, delta_t, nz, Lz, nhr, tf, simlabel):
                                   kwargs={"fill_value": "extrapolate"})
     ts_all["q3"] = q3_ts.interp(z=zu, method="linear", 
                                 kwargs={"fill_value": "extrapolate"})
+    if use_q:
+        ts_all["q"] = q_ts
+        ts_all["thetav"] = thetav_ts
+        ts_all["qw_sgs"] = wq_sgs_ts.interp(z=zu, method="linear",
+                                            kwargs={"fill_value": "extrapolate"})
     # save to netcdf
     fsave_ts = f"{dnc}timeseries_all_{nhr}h.nc"
     with ProgressBar():
