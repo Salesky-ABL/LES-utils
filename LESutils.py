@@ -42,7 +42,7 @@ def read_f90_bin(path, nx, ny, nz, precision):
     return dat
 # ---------------------------------------------
 def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt, 
-               use_dissip, simlabel, units=None):
+               use_dissip, use_q, simlabel, units=None):
     """Read binary output files from LES code and combine into one netcdf
     file per timestep using xarray for future reading and easier analysis
 
@@ -56,6 +56,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     :param int t1: last timestep to process
     :param int dt: number of timesteps between files to load
     :param bool use_dissip: flag for loading dissipation rate files (SBL only)
+    :param bool use_q: flag for loading specific humidity files (les_brg only)
     :param str simlabel: unique identifier for batch of files
     :param dict units: dictionary of units corresponding to each loaded\
         variable. Default values hard-coded in this function
@@ -69,7 +70,8 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     u_scale = scales[0]
     theta_scale = scales[1]
-    q_scale = scales[2]
+    if use_q:
+        q_scale = scales[2]
     # define timestep array
     timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
     nt = len(timesteps)
@@ -100,17 +102,12 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
         tyz_in = read_f90_bin(f6,nx,ny,nz,8) * u_scale * u_scale
         f7 = f"{dout}q3_{timesteps[i]:07d}.out"
         q3_in = read_f90_bin(f7,nx,ny,nz,8) * u_scale * theta_scale
-        f8 = f"{dout}q_{timesteps[i]:07d}.out"
-        q_in = read_f90_bin(f8,nx,ny,nz,8) * q_scale
-        f9 = f"{dout}wq_sgs_{timesteps[i]:07d}.out"
-        wq_sgs_in = read_f90_bin(f9,nx,ny,nz,8) * u_scale * q_scale
         # interpolate w, txz, tyz, q3, wq_sgs to u grid
         # create DataArrays
         w_da = xr.DataArray(w_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
         txz_da = xr.DataArray(txz_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
         tyz_da = xr.DataArray(tyz_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
         q3_da = xr.DataArray(q3_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
-        wq_sgs_da = xr.DataArray(wq_sgs_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
         # perform interpolation
         w_interp = w_da.interp(z=zu, method="linear", 
                                kwargs={"fill_value": "extrapolate"})
@@ -120,14 +117,11 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
                                    kwargs={"fill_value": "extrapolate"})
         q3_interp = q3_da.interp(z=zu, method="linear", 
                                  kwargs={"fill_value": "extrapolate"})
-        wq_sgs_interp = wq_sgs_da.interp(z=zu, method="linear", 
-                                         kwargs={"fill_value": "extrapolate"})
         # construct dictionary of data to save -- u-node variables only!
         data_save = {
                         "u": (["x","y","z"], u_in),
                         "v": (["x","y","z"], v_in),
-                        "theta": (["x","y","z"], theta_in),
-                        "q": (["x","y","z"], q_in)
+                        "theta": (["x","y","z"], theta_in)
                     }
         # check fo using dissipation files
         if use_dissip:
@@ -139,6 +133,19 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
                                    coords=dict(x=x, y=y, z=zw))
             diss_interp = diss_da.interp(z=zu, method="linear", 
                                          kwargs={"fill_value": "extrapolate"})
+        if use_q:
+            # read binary files
+            f8 = f"{dout}q_{timesteps[i]:07d}.out"
+            q_in = read_f90_bin(f8,nx,ny,nz,8) * q_scale
+            f9 = f"{dout}wq_sgs_{timesteps[i]:07d}.out"
+            wq_sgs_in = read_f90_bin(f9,nx,ny,nz,8) * u_scale * q_scale
+            # add q to data_save
+            data_save["q"] = (["x","y","z"], q_in)
+            # interpolate to u-nodes
+            wq_sgs_da = xr.DataArray(wq_sgs_in, dims=("x", "y", "z"), 
+                                     coords=dict(x=x, y=y, z=zw))
+            wq_sgs_interp = wq_sgs_da.interp(z=zu, method="linear", 
+                                     kwargs={"fill_value": "extrapolate"})
         # construct dataset from these variables
         ds = xr.Dataset(
             data_save,
@@ -164,7 +171,8 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
         ds["txz"] = txz_interp
         ds["tyz"] = tyz_interp
         ds["q3"] = q3_interp
-        ds["wq_sgs"] = wq_sgs_interp
+        if use_q:
+            ds["wq_sgs"] = wq_sgs_interp
         if use_dissip:
             ds["dissip"] = diss_interp
         # hardcode dictionary of units to use by default
@@ -196,7 +204,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     print("Finished saving all files!")
     return
 # ---------------------------------------------
-def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
+def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg):
     """Read multiple output netcdf files created by sim2netcdf() to calculate
     averages in x, y, t and save as new netcdf file
 
@@ -206,6 +214,7 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
     :param int dt: number of timesteps between files to load
     :param float delta_t: dimensional timestep in simulation (seconds)
     :param bool use_dissip: flag for loading dissipation rate files (SBL only)
+    :param bool use_q: flag for loading specific humidity files (les_brg only)
     :param bool detrend_stats: flag for detrending fields in time when\
         calculating statistics
     :param str tavg: label denoting length of temporal averaging (e.g. 1h)
@@ -231,11 +240,14 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
     # create empty dataset that will hold everything
     dd_stat = xr.Dataset()
     # list of base variables
-    base = ["u", "v", "w", "theta", "q"]
-    base1 = ["u", "v", "w", "theta", "q"] # use for looping over vars in case dissip not used
+    base = ["u", "v", "w", "theta"]
+    base1 = ["u", "v", "w", "theta"] # use for looping over vars in case dissip not used
     # check for dissip
     if use_dissip:
         base.append("dissip")
+    if use_q:
+        base.append("q")
+        base1.append("q")
     # calculate means
     for s in base:
         dd_stat[f"{s}_mean"] = dd[s].mean(dim=("time", "x", "y"))
@@ -249,9 +261,10 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, detrend_stats, tavg):
     # theta'w'
     dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("time", "x", "y"))
     dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd.q3.mean(dim=("time","x","y"))
-    # q'w'
-    dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
-    dd_stat["qw_cov_res"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
+    if use_q:
+        # q'w'
+        dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
+        dd_stat["qw_cov_res"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
     # calculate vars
     for s in base1:
         if detrend_stats:
