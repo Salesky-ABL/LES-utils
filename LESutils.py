@@ -265,6 +265,12 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
         # q'w'
         dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
         dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
+        # calculate thetav
+        tv = dd.theta * (1. + 0.61*dd.q/1000.)
+        dd_stat["thetav_mean"] = tv.mean(dim=("time","x","y"))
+        # tvw_cov_tot from tw_cov_tot and qw_cov_tot
+        dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
+            0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot
     # calculate vars
     for s in base1:
         if detrend_stats:
@@ -333,6 +339,9 @@ def load_stats(fstats, SBL=False, display=False):
     dd["tstar0"] = -dd.tw_cov_tot.isel(z=0)/dd.ustar0
     # local thetastar
     dd["tstar"] = -dd.tw_cov_tot / dd.ustar
+    # Qstar
+    if "qw_cov_tot" in list(dd.keys()):
+        dd["Qstar0"] = -dd.qw_cov_tot.isel(z=0) / dd.ustar0
     # calculate TKE
     dd["e"] = 0.5 * (dd.u_var + dd.v_var + dd.w_var)
     # calculate Obukhov length L
@@ -340,14 +349,29 @@ def load_stats(fstats, SBL=False, display=False):
     # calculate uh and wdir
     dd["uh"] = np.sqrt(dd.u_mean**2. + dd.v_mean**2.)
     dd["wdir"] = np.arctan2(-dd.u_mean, -dd.v_mean) * 180./np.pi
-    dd["wdir"] = dd.wdir.where(dd.wdir < 0.) + 360.
+    jz_neg = np.where(dd.wdir < 0.)[0]
+    dd["wdir"][jz_neg] += 360.
     # calculate mean lapse rate between lowest grid point and z=h
     delta_T = dd.theta_mean.sel(z=dd.h, method="nearest") - dd.theta_mean[0]
     delta_z = dd.z.sel(z=dd.h, method="nearest") - dd.z[0]
     dd["dT_dz"] = delta_T / delta_z
     # calculate eddy turnover time TL
-    dd["TL"] = dd.h / dd.ustar0
-    dd["nTL"] = 3600. / dd.TL
+    if SBL:
+        # use ustar
+        dd["TL"] = dd.h / dd.ustar0
+    else:
+        # calculate wstar and use for TL calc
+        # use humidity if exists
+        if "tvw_cov_tot" in list(dd.keys()):
+            dd["wstar"] = ((9.81/dd.thetav_mean[0]) * dd.tvw_cov_tot[0] * dd.h) ** (1./3.)
+        else:
+            dd["wstar"] = ((9.81/dd.theta_mean[0]) * dd.tw_cov_tot[0] * dd.h) ** (1./3.)
+        # now calc TL using wstar in CBL
+        dd["TL"] = dd.h / dd.wstar
+    # determine how many TL exist over range of files averaged
+    # convert tavg string to number by cutting off the single letter at the end
+    dd["nTL"] = float(dd.tavg[:-1]) * 3600. / dd.TL
+
     # calculate MOST dimensionless functions phim, phih
     kz = 0.4 * dd.z # kappa * z
     dd["phim"] = (kz/dd.ustar) * np.sqrt(dd.u_mean.differentiate("z", 2)**2.+\
