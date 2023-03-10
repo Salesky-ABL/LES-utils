@@ -264,7 +264,7 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
     if use_q:
         # q'w'
         dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
-        dd_stat["qw_cov_res"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
+        dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
     # calculate vars
     for s in base1:
         if detrend_stats:
