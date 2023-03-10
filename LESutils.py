@@ -603,7 +603,15 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
     fts = f"timeseries_all_{tavg}.nc"
     d = xr.open_dataset(dnc+fts)
     # calculate means
-    for v in ["u", "v", "w", "theta"]:
+    varlist = ["u", "v", "w", "theta"]
+    # check for humidity
+    if "q" in list(d.keys()):
+        varlist.append("q")
+        varlist.append("thetav")
+        use_q = True
+    else:
+        use_q = False
+    for v in varlist:
         d[f"{v}_mean"] = d[v].mean("t") # average in time
     # rotate coords so <v> = 0
     angle = np.arctan2(d.v_mean, d.u_mean)
@@ -638,6 +646,13 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
         d["uw"] = (ud * wd) + d.txz
         d["vw"] = (vd * wd) + d.tyz
         d["tw"] = (td * wd) + d.q3
+        # do same with q variables
+        if use_q:
+            qd = xrft.detrend(d.q, dim="t", detrend_type="linear")
+            d["qd"] = qd
+            d["qq"] = qd * qd
+            d["qw"] = (qd * qd) + d.qw_sgs
+            d["tvw"] = d.tw + 0.61*d.td*d.qw/1000.
     else:
         d["uu"] = (d.u - d.u_mean) * (d.u - d.u_mean)
         d["uur"] = (d.u_rot - d.u_mean_rot) * (d.u_rot - d.u_mean_rot)
@@ -649,6 +664,11 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
         d["uw"] = (d.u - d.u_mean) * (d.w - d.w_mean) + d.txz
         d["vw"] = (d.v - d.v_mean) * (d.w - d.w_mean) + d.tyz
         d["tw"] = (d.theta - d.theta_mean) * (d.w - d.w_mean) + d.q3
+        # do same for q
+        if use_q:
+            d["qq"] = (d.q - d.q_mean) * (d.q - d.q_mean)
+            d["qw"] = (d.q - d.q_mean) * (d.w - d.w_mean) + d.qw_sgs
+            d["tvw"] = d.tw + 0.61*(d.theta - d.theta_mean)*d.qw/1000.
     
     return d
 # ---------------------------------------------
