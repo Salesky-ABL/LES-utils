@@ -13,7 +13,6 @@ import xrft
 import xarray as xr
 import numpy as np
 from numba import njit
-from scipy.signal import detrend
 from dask.diagnostics import ProgressBar
 # --------------------------------
 # Begin Defining Functions
@@ -67,7 +66,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     # grab relevent parameters
     nx, ny, nz = resolution
     Lx, Ly, Lz = dimensions
-    dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
+    dx, dy, dz = Lx/nx, Ly/ny, Lz/(nz-1)
     u_scale = scales[0]
     theta_scale = scales[1]
     if use_q:
@@ -79,7 +78,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     x, y = np.linspace(0., Lx, nx), np.linspace(0, Ly, ny)
     # u- and w-nodes are staggered
     # zw = 0:Lz:nz
-    # zu = dz/2:Lz-dz/2:nz-1
+    # zu = dz/2:Lz-dz/2:nz
     # interpolate w, txz, tyz, q3 to u grid
     zw = np.linspace(0., Lz, nz)
     zu = np.linspace(dz/2., Lz+dz/2., nz)
@@ -274,8 +273,9 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
     # calculate vars
     for s in base1:
         if detrend_stats:
-            vv = np.var(detrend(dd[s], axis=0, type="linear"), axis=(0,1,2))
-            dd_stat[f"{s}_var"] = xr.DataArray(vv, dims=("z"), coords=dict(z=dd.z))
+            # detrend by subtracting planar averages at each timestep
+            vp = dd[s] - dd[s].mean(dim=("x","y"))
+            dd_stat[f"{s}_var"] = vp.var(dim=("time","x","y"))
         else:
             dd_stat[f"{s}_var"] = dd[s].var(dim=("time", "x", "y"))
     # rotate u_mean and v_mean so <v> = 0
@@ -289,20 +289,29 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
     v_rot =-dd.u*np.sin(angle_inst) + dd.v*np.cos(angle_inst)
     # recalculate u_var_rot, v_var_rot
     if detrend_stats:
-        uvar_rot = np.var(detrend(u_rot, axis=0, type="linear"), axis=(0,1,2))
-        dd_stat["u_var_rot"] = xr.DataArray(uvar_rot, dims=("z"), coords=dict(z=dd.z))
-        vvar_rot = np.var(detrend(v_rot, axis=0, type="linear"), axis=(0,1,2))
-        dd_stat["v_var_rot"] = xr.DataArray(vvar_rot, dims=("z"), coords=dict(z=dd.z))
+        uvar_rot = u_rot - u_rot.mean(dim=("x","y"))
+        dd_stat["u_var_rot"] = uvar_rot.var(dim=("time","x","y"))
+        vvar_rot = v_rot - v_rot.mean(dim=("x","y"))
+        dd_stat["v_var_rot"] = vvar_rot.var(dim=("time","x","y"))
+        # also take the chance to calculate <theta'q'>
+        if use_q:
+            td = dd.theta - dd.theta.mean(dim=("x","y"))
+            qd = dd.q - dd.q.mean(dim=("x","y"))
+            dd_stat["tq_cov_res"] = xr.cov(td, qd, dim=("time","x","y"))
     else:
         dd_stat["u_var_rot"] = u_rot.var(dim=("time", "x", "y"))
         dd_stat["v_var_rot"] = v_rot.var(dim=("time", "x", "y"))
+        # also take the chance to calculate <theta'q'>
+        if use_q:
+            dd_stat["tq_cov_res"] = xr.cov(dd.theta, dd.q, dim=("time","x","y"))
     # --------------------------------
     # Add attributes
     # --------------------------------
     # copy from dd
     dd_stat.attrs = dd.attrs
     dd_stat.attrs["delta"] = (dd.dx * dd.dy * dd.dz) ** (1./3.)
-    dd_stat.attrs["tavg"] = tavg
+    # calculate number of hours in average based on timesteps array
+    dd_stat.attrs["tavg"] = delta_t * (t1 - t0) / 3600.
     # --------------------------------
     # Save output file
     # --------------------------------
@@ -339,9 +348,9 @@ def load_stats(fstats, SBL=False, display=False):
     dd["tstar0"] = -dd.tw_cov_tot.isel(z=0)/dd.ustar0
     # local thetastar
     dd["tstar"] = -dd.tw_cov_tot / dd.ustar
-    # Qstar
+    # qstar
     if "qw_cov_tot" in list(dd.keys()):
-        dd["Qstar0"] = -dd.qw_cov_tot.isel(z=0) / dd.ustar0
+        dd["qstar0"] = -dd.qw_cov_tot.isel(z=0) / dd.ustar0
     # calculate TKE
     dd["e"] = 0.5 * (dd.u_var + dd.v_var + dd.w_var)
     # calculate Obukhov length L
@@ -368,9 +377,12 @@ def load_stats(fstats, SBL=False, display=False):
             dd["wstar"] = ((9.81/dd.theta_mean[0]) * dd.tw_cov_tot[0] * dd.h) ** (1./3.)
         # now calc TL using wstar in CBL
         dd["TL"] = dd.h / dd.wstar
+        # use wstar to define Tstar and Qstar in CBL
+        dd["Tstar0"] = dd.tw_cov_tot.isel(z=0) / dd.wstar
+        dd["Qstar0"] = dd.qw_cov_tot.isel(z=0) / dd.wstar
     # determine how many TL exist over range of files averaged
     # convert tavg string to number by cutting off the single letter at the end
-    dd["nTL"] = float(dd.tavg[:-1]) * 3600. / dd.TL
+    dd["nTL"] = dd.tavg * 3600. / dd.TL
 
     # calculate MOST dimensionless functions phim, phih
     kz = 0.4 * dd.z # kappa * z
@@ -499,7 +511,7 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
     theta_scale = scales[1]
     if use_q:
         q_scale = scales[2]
-    dz = Lz/nz
+    dz = Lz/(nz-1)
     # define z array
     # u- and w-nodes are staggered
     # zw = 0:Lz:nz
