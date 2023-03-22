@@ -8,12 +8,11 @@
 # spectral analysis of LES output including:
 # autocorrelation, spectral interpolation, power spectral density
 # --------------------------------
+import os
 import xrft
 import xarray as xr
 import numpy as np
-from scipy.fft import fft, ifft, fft2, ifft2, fftshift
 from dask.diagnostics import ProgressBar
-from scipy.signal import detrend
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
@@ -107,4 +106,77 @@ def autocorr_2d(dnc, df, timeavg=True):
         Rsave.to_netcdf(fsave, mode="w")
     
     print("Finished computing 2d autocorrelation functions!")
+    return
+# --------------------------------
+def spectrogram(dnc, df, detrend="constant"):
+    """Input 4D xarray Dataset with loaded LES data to calculate
+    power spectral density along x-direction, then average in
+    y and time. Calculate for u', w', theta', q', u'w', theta'w',
+    q'w', theta'q'.
+    Save netcdf file in dnc.
+
+    :param str dnc: absolute path to netcdf directory for saving new file
+    :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
+    :param str detrend: how to detrend along x-axis before processing,\
+        default="constant" (also accepts "linear")
+    """
+    # construct Dataset to save
+    Esave = xr.Dataset(data_vars=None, attrs=df.attrs)
+    # add additional attr for detrend_first
+    Esave.attrs["detrend_type"] = str(detrend)
+
+    # variables to loop over for calculations
+    vall = ["u_rot", "w", "theta", "q"]
+    vsave = ["uu", "ww", "tt", "qq"]
+
+    # loop over variables
+    for v, vs in zip(vall, vsave):
+        # grab data
+        din = df[v]
+        # detrend
+        # subtract mean by default, or linear if desired
+        dfluc = xrft.detrend(din, dim="x", detrend_type=detrend)
+        # normalize by standard deviation
+        dnorm = dfluc / dfluc.std(dim="x")
+        # calculate PSD using xrft
+        PSD = xrft.power_spectrum(dnorm, dim="x", true_phase=True, 
+                                  true_amplitude=True)
+        # average in y and time, take only real values
+        PSD_ytavg = PSD.mean(dim=("time","y"))
+        # store in Esave
+        Esave[vs] = PSD_ytavg.real
+
+    # variables to loop over for cross spectra
+    vall2 = [("u_rot", "w"), ("theta", "w"), ("q", "w"), ("theta", "q")]
+    vsave2 = ["uw", "tw", "qw", "tq"]
+
+    # loop over variables
+    for v, vs in zip(vall2, vsave2):
+        # grab data
+        din1, din2 = df[v[0]], df[v[1]]
+        # detrend
+        # subtract mean by default, or linear if desired
+        dfluc1 = xrft.detrend(din1, dim="x", detrend_type=detrend)
+        dfluc2 = xrft.detrend(din2, dim="x", detrend_type=detrend)
+        # normalize by standard deviation
+        dnorm1 = dfluc1 / dfluc1.std(dim="x")
+        dnorm2 = dfluc2 / dfluc2.std(dim="x")
+        # calculate cross spectrum using xrft
+        PSD = xrft.cross_spectrum(dnorm1, dnorm2, dim="x", scaling="density",
+                                  true_phase=True, true_amplitude=True)
+        # average in y and time, take only real values
+        PSD_ytavg = PSD.mean(dim=("time","y"))
+        # store in Esave
+        Esave[vs] = PSD_ytavg.real
+
+    # save file and return
+    fsave = f"{dnc}spectrogram.nc"
+    # delete old file for saving new one
+    if os.path.exists(fsave):
+        os.system(f"rm {fsave}")
+    print(f"Saving file: {fsave}")
+    with ProgressBar():
+        Esave.to_netcdf(fsave, mode="w")
+    
+    print("Finished computing spectrograms!")
     return
