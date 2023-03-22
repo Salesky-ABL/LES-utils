@@ -168,7 +168,10 @@ def spectrogram(dnc, df, detrend="constant"):
         PSD_ytavg = PSD.mean(dim=("time","y"))
         # store in Esave
         Esave[vs] = PSD_ytavg.real
-
+    
+    # only save positive frequencies
+    Esave = Esave.where(Esave.freq_x > 0., drop=True)
+    
     # save file and return
     fsave = f"{dnc}spectrogram.nc"
     # delete old file for saving new one
