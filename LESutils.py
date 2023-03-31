@@ -219,7 +219,7 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
     :param str tavg: label denoting length of temporal averaging (e.g. 1h)
     """
     # directories and configuration
-    timesteps = np.arange(t0, t1, dt, dtype=np.int32)
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
     # determine files to read from timesteps
     fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
     nf = len(fall)
@@ -372,17 +372,21 @@ def load_stats(fstats, SBL=False, display=False):
         # calculate wstar and use for TL calc
         # use humidity if exists
         if "tvw_cov_tot" in list(dd.keys()):
-            dd["wstar"] = ((9.81/dd.thetav_mean[0]) * dd.tvw_cov_tot[0] * dd.h) ** (1./3.)
+            dd["wstar"] = ((9.81/dd.thetav_mean.sel(z=dd.h/2, method="nearest"))\
+                            * dd.tvw_cov_tot[0] * dd.h) ** (1./3.)
+            # use this wstart to calc Qstar, otherwise skip
+            dd["Qstar0"] = dd.qw_cov_tot.isel(z=0) / dd.wstar
         else:
-            dd["wstar"] = ((9.81/dd.theta_mean[0]) * dd.tw_cov_tot[0] * dd.h) ** (1./3.)
+            dd["wstar"] = ((9.81/dd.theta_mean.sel(z=dd.h/2, method="nearest"))\
+                            * dd.tw_cov_tot[0] * dd.h) ** (1./3.)
         # now calc TL using wstar in CBL
         dd["TL"] = dd.h / dd.wstar
-        # use wstar to define Tstar and Qstar in CBL
+        # use wstar to define Tstar in CBL
         dd["Tstar0"] = dd.tw_cov_tot.isel(z=0) / dd.wstar
-        dd["Qstar0"] = dd.qw_cov_tot.isel(z=0) / dd.wstar
+        
     # determine how many TL exist over range of files averaged
     # convert tavg string to number by cutting off the single letter at the end
-    dd["nTL"] = dd.tavg * 3600. / dd.TL
+    # dd["nTL"] = dd.tavg * 3600. / dd.TL
 
     # calculate MOST dimensionless functions phim, phih
     kz = 0.4 * dd.z # kappa * z
