@@ -1,0 +1,46 @@
+# --------------------------------
+# Name: process.yaml
+# Author: Brian R. Greene
+# University of Oklahoma
+# Created: 31 March 2023
+# Purpose: process output from LES using functions from LESutils
+# for use with process.py
+# --------------------------------
+# name of directory with raw output files
+dout: "/home/bgreene/simulations/u01_tw24_qw008_moist/output/"
+# name of directory to save netcdf files
+dnc: "/home/bgreene/simulations/u01_tw24_qw008_moist/output/netcdf/"
+# simulation parameters
+# first timestep to load
+t0: 480000
+# last timestep to load
+t1: 720000
+# number of timesteps between files to load
+dt: 1000
+# dimensional timestep
+delta_t: 0.03
+# simulation resolution
+res: [256, 256, 256]
+# simulation domain size in m
+dim: [12000, 12000, 2000]
+# dimensional scales for [u, theta, q]
+scales: [0.4, 300, 1000]
+# use output dissipation files
+use_dissip: False
+# use moisture fields
+use_q: True
+# simulation label
+simlab: "u01_tw24_qw008_moist"
+# averaging period
+tavg: "4-6h"
+# detrend for calc_stats
+detrend: True
+# timeseries specific flags
+# number of hours to load
+nhr: 4
+# final timestep to count backwards from
+tf: 720000
+# flags for running functions
+sim2nc: False
+calcstats: True
+ts2nc: False
