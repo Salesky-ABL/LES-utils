@@ -9,7 +9,7 @@
 import sys
 sys.path.append("..")
 import yaml
-from LESutils import sim2netcdf, calc_stats, timeseries2netcdf
+from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf
 
 # load yaml file
 fyaml = "/home/bgreene/LES-utils/scripts/process.yaml"
@@ -28,9 +28,17 @@ if config["sim2nc"]:
 # calc_stats
 if config["calcstats"]:
     print("Begin calc_stats...")
-    calc_stats(config["dnc"],config["t0"], config["t1"], config["dt"], 
+    calc_stats(config["dnc"], config["t0"], config["t1"], config["dt"], 
                config["delta_t"], config["use_dissip"], config["use_q"], 
                config["detrend"], config["tavg"])
+    print("Finished calc_stats!")
+
+# calc_stats_long
+if config["statslong"]:
+    print("Begin calc_stats_long...")
+    calc_stats_long(config["dnc"], config["t0"], config["t1"], config["dt"],
+                    config["delta_t"], config["use_dissip"], config["use_q"],
+                    config["tavg"])
     print("Finished calc_stats!")
     
 # timeseries2netcdf

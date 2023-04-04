@@ -7,14 +7,14 @@
 # for use with process.py
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/u01_tw24_qw008_moist/output/"
+dout: "/home/bgreene/simulations/u01_tw24_qw008_dry/output/"
 # name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/u01_tw24_qw008_moist/output/netcdf/"
+dnc: "/home/bgreene/simulations/u01_tw24_qw008_dry/output/netcdf/"
 # simulation parameters
 # first timestep to load
-t0: 480000
+t0: 400000
 # last timestep to load
-t1: 720000
+t1: 400000
 # number of timesteps between files to load
 dt: 1000
 # dimensional timestep
@@ -30,9 +30,9 @@ use_dissip: False
 # use moisture fields
 use_q: True
 # simulation label
-simlab: "u01_tw24_qw008_moist"
+simlab: "u01_tw24_qw008_dry"
 # averaging period
-tavg: "4-6h"
+tavg: "inst"
 # detrend for calc_stats
 detrend: True
 # timeseries specific flags
@@ -41,6 +41,7 @@ nhr: 4
 # final timestep to count backwards from
 tf: 720000
 # flags for running functions
-sim2nc: False
+sim2nc: True
 calcstats: True
+statslong: False
 ts2nc: False
