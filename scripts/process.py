@@ -9,7 +9,8 @@
 import sys
 sys.path.append("..")
 import yaml
-from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf
+from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf, load_full
+from spec import autocorr_1d, autocorr_2d, spectrogram
 
 # load yaml file
 fyaml = "/home/bgreene/LES-utils/scripts/process.yaml"
@@ -49,5 +50,31 @@ if config["ts2nc"]:
                       config["dim"][2], config["nhr"], config["tf"], 
                       config["simlab"])
     print("Finished timeseries2netcdf!")
+
+#
+# Spectral analysis functions - requires loading files first
+#
+if (config["ac1d"] or config["ac2d"] or config["spec"]):
+    dd, s = load_full(config["dnc"], config["t0"], config["t1"], config["dt"],
+                      config["delta_t"], SBL=config["SBL"], 
+                      stats=config["fstats"])
+
+# 1d autocorrelation
+if config["ac1d"]:
+    print("Begin autocorr_1d...")
+    autocorr_1d(config["dnc"], dd)
+    print("Finished autocorr_1d!")
+
+# 2d autocorrelation
+if config["ac2d"]:
+    print("Begin autocorr_2d...")
+    autocorr_2d(config["dnc"], dd)
+    print("Finished autocorr_2d!")
+
+# spectrogram
+if config["spec"]:
+    print("Begin spectrogram...")
+    spectrogram(config["dnc"], dd)
+    print("Finished spectrogram!")
 
 print("process.py complete!")
