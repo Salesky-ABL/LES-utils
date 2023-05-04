@@ -839,6 +839,7 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
             d["qq"] = qd * qd
             d["qw"] = (qd * qd) + d.qw_sgs
             d["tvw"] = d.tw + 0.61*d.td*d.qw/1000.
+            d["tq"] = td * qd
     else:
         d["uu"] = (d.u - d.u_mean) * (d.u - d.u_mean)
         d["uur"] = (d.u_rot - d.u_mean_rot) * (d.u_rot - d.u_mean_rot)
@@ -855,6 +856,7 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
             d["qq"] = (d.q - d.q_mean) * (d.q - d.q_mean)
             d["qw"] = (d.q - d.q_mean) * (d.w - d.w_mean) + d.qw_sgs
             d["tvw"] = d.tw + 0.61*(d.theta - d.theta_mean)*d.qw/1000.
+            d["tq"] = (d.q - d.q_mean) * (d.theta - d.theta_mean)
     
     return d
 # ---------------------------------------------
