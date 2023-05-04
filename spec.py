@@ -249,7 +249,7 @@ def amp_mod(dnc, ts, s):
         # loop over heights and lowpass filter (same as above)
         for jz in range(ts.nz):
             f_E[v][:,jz] = f_E[v][:,jz].where((f_E[v].freq_t < f_c.isel(z=jz)) &\
-                                              (f_E[v].freq_t <-f_c.isel(z=jz)),
+                                              (f_E[v].freq_t >-f_c.isel(z=jz)),
                                               other=0.)
     
     # inverse FFT the filtered envelopes
