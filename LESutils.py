@@ -66,7 +66,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     # grab relevent parameters
     nx, ny, nz = resolution
     Lx, Ly, Lz = dimensions
-    dx, dy, dz = Lx/nx, Ly/ny, Lz/(nz-1)
+    dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
     u_scale = scales[0]
     theta_scale = scales[1]
     if use_q:
@@ -685,7 +685,7 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
     theta_scale = scales[1]
     if use_q:
         q_scale = scales[2]
-    dz = Lz/(nz-1)
+    dz = Lz/nz
     # define z array
     # u- and w-nodes are staggered
     # zw = 0:Lz:nz
@@ -1009,3 +1009,79 @@ def ec_tow(ts, h, time_average=1800.0, time_start=0.0):
     
     # only return ec where z <= h
     return ec_.where(ec_.z <= h, drop=True)
+# ---------------------------------------------
+@njit
+def rot_interp(nx, ny, nz, Lx, Ly, dx, dy, ca, sa, dat):
+    """Rotate 3D field into new coordinate system aligned with mean
+    wind at each height, interpolated into new grid.
+    :param int nx: number of points in x-dimension
+    :param int ny: number of points in x-dimension
+    :param int nz: number of points in x-dimension
+    :param float Lx: size of domain in x-dimension
+    :param float Ly: size of domain in y-dimension
+    :param float dx: grid spacing in x-dimension
+    :param float dy: grid spacing in y-dimension
+    :param ndarray ca: cosine of mean wind direction
+    :param ndarray sa: sine of mean wind direction
+    :param ndarray dat: 3-dimensional field to be rotated
+    return x_hat, y_hat, dat_r: new x and y coordinate pairs and rotated field
+    """
+
+    # initialize empty arrays for interpolated grid
+    x_hat, y_hat = [np.zeros((nx, ny, nz), dtype=np.float64) for _ in range(2)]
+    # initialize empty rotated data array
+    dat_r = np.zeros((nx, ny, nz), dtype=np.float64)
+    # loop over old x and y
+    for jx in range(nx):
+        for jy in range(ny):
+            # calc positions of rotated coords (x_hat, y_hat) in old coords (x, y)
+            x_hat[jx,jy,:] = np.fmod(jx*dx, Lx)*ca + np.fmod(-jy*dy, Ly)*sa
+            y_hat[jx,jy,:] = np.fmod(jx*dx, Lx)*sa + np.fmod( jy*dy, Ly)*ca
+            # perform interpolation
+            for jz in range(nz):
+                # indices
+                i1 = int(np.fmod(np.floor(x_hat[jx,jy,jz]/dx), nx))
+                j1 = int(np.fmod(np.floor(y_hat[jx,jy,jz]/dy), ny))
+                i2 = int(np.fmod(i1, nx))
+                j2 = int(np.fmod(j1, ny))
+                # calculate weights
+                x1 = np.fmod(x_hat[jx,jy,jz], dx) / dx
+                x2 = np.fmod(y_hat[jx,jy,jz], dy) / dy
+                w1 = (1. - x1) * (1. - x2)
+                w2 = (   x1  ) * (1. - x2)
+                w3 = (1. - x1) * (   x2  )
+                w4 = (   x1  ) * (   x2  )
+                # interpolate
+                dat_r[jx,jy,jz] = dat[i1,j1,jz]*w1 +\
+                                  dat[i2,j1,jz]*w2 +\
+                                  dat[i1,j2,jz]*w3 +\
+                                  dat[i2,j2,jz]*w4
+    
+    return x_hat, y_hat, dat_r
+# ---------------------------------------------
+@njit
+def calc_increments(nx, ny, nz, dat1, dat2):
+    # initialize counter array for averaging later
+    rcount = np.zeros(nx, dtype=np.float64)
+    # initialize increment array
+    delta2 = np.zeros((nx, ny, nz), dtype=np.float64)
+    # begin loop over starting x
+    for jx in range(nx):
+        # loop over x lag
+        for jr in range(nx):
+            # test to see if starting position + lag are within domain
+            if jx+jr < nx:
+                # increment count
+                rcount[jr] += 1.0
+                # calculate increment
+                d1 = dat1[jx+jr,:,:] - dat1[jx,:,:]
+                d2 = dat2[jx+jr,:,:] - dat2[jx,:,:]
+                incr = d1 * d2
+                # store in delta2
+                delta2[jr,:,:] += incr
+    # normalize by rcount to average over lags
+    Dout = np.zeros((nx, ny, nz), dtype=np.float64)
+    for jr in range(nx):
+        Dout[jr,:,:] = delta2[jr,:,:] / rcount[jr]
+    # return Dout(lag, y, z)
+    return Dout, rcount
