@@ -9,8 +9,9 @@
 import sys
 sys.path.append("..")
 import yaml
-from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf, load_full
-from spec import autocorr_1d, autocorr_2d, spectrogram
+from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf, load_full,\
+                     load_stats, load_timeseries
+from spec import autocorr_1d, autocorr_2d, spectrogram, amp_mod
 
 # load yaml file
 fyaml = "/home/bgreene/LES-utils/scripts/process.yaml"
@@ -76,5 +77,14 @@ if config["spec"]:
     print("Begin spectrogram...")
     spectrogram(config["dnc"], dd)
     print("Finished spectrogram!")
+
+# amplitude modulation: requires timeseries file
+if config["AM"]:
+    s = load_stats(config["dnc"]+config["fstats"])
+    ts = load_timeseries(config["dnc"], detrend=True, 
+                         tavg=f"{config['nhr']}h")
+    print("Begin amp_mod...")
+    amp_mod(config["dnc"], ts, s)
+    print("Finished amp_mod!")
 
 print("process.py complete!")

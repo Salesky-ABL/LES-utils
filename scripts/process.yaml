@@ -7,20 +7,20 @@
 # for use with process.py
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/u15_tw10_qw008_moist/output/"
+dout: "/home/bgreene/simulations/u01_tw24_qw10_dry2/output/"
 # name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/u15_tw10_qw008_moist/output/netcdf/"
+dnc: "/home/bgreene/simulations/u01_tw24_qw10_dry2/output/netcdf/"
 # simulation parameters
 # first timestep to load
-t0: 400000
+t0: 360000
 # last timestep to load
-t1: 400000
+t1: 432000
 # number of timesteps between files to load
 dt: 1000
 # dimensional timestep
-delta_t: 0.03
+delta_t: 0.05
 # simulation resolution
-res: [256, 256, 256]
+res: [128, 128, 128]
 # simulation domain size in m
 dim: [12000, 12000, 2000]
 # dimensional scales for [u, theta, q]
@@ -30,26 +30,27 @@ use_dissip: True
 # use moisture fields
 use_q: True
 # simulation label
-simlab: "u15_tw10_qw008_moist"
+simlab: "u01_tw24_qw10_dry2"
 # averaging period
-tavg: "inst"
+tavg: "5-6h"
 # detrend for calc_stats
 detrend: True
 # timeseries specific flags
 # number of hours to load
-nhr: 4
+nhr: 1
 # final timestep to count backwards from
-tf: 720000
+tf: 432000
 # flag for SBL
 SBL: False
 # name of stats file to load, if applicable
-fstats: "mean_stats_xyt_4-6h.nc"
+fstats: "mean_stats_xyt_5-6h.nc"
 # flags for running functions
-sim2nc: True
-calcstats: True
+sim2nc: False
+calcstats: False
 statslong: False
-ts2nc: False
+ts2nc: True
 # flags for running spec functions
 ac1d: False
 ac2d: False
 spec: False
+AM: True
