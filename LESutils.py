@@ -208,6 +208,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
 
         # delete files from this timestep if desired
         if del_raw:
+            print("Cleaning up raw files...")
             for ff in fout_all:
                 os.system(f"rm {ff}")
 
@@ -676,7 +677,8 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
     # just return dd if no stats
     return dd
 # ---------------------------------------------
-def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlabel):
+def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, 
+                      nhr, tf, simlabel, del_raw=False):
     """Load raw timeseries data at each level and combine into single
     netcdf file with dimensions (time, z)
     :param str dout: absolute path to directory with LES output binary files
@@ -690,6 +692,8 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
     :param float nhr: number of hours to load, counting backwards from end
     :param int tf: final timestep in file
     :param str simlabel: unique identifier for batch of files
+    :param bool del_raw: automatically delete raw .out files from LES code\
+        to save space, default=False
     """
     # grab relevent parameters
     u_scale = scales[0]
@@ -720,6 +724,7 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
     w_ts, txz_ts, tyz_ts, q3_ts, wq_sgs_ts =\
     (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
                   dims=("t", "z"), coords=dict(t=time, z=zw)) for _ in range(5))
+    fout_all = []
     # now loop through each file (one for each jz)
     for jz in range(nz):
         print(f"Loading timeseries data, jz={jz}")
@@ -737,6 +742,7 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
         tyz_ts[:,jz] = np.loadtxt(ftyz, skiprows=istart, usecols=1)
         fq3 = f"{dout}q3_timeseries_c{jz:03d}.out"
         q3_ts[:,jz] = np.loadtxt(fq3, skiprows=istart, usecols=1)
+        fout_all += [fu, fv, fw, ftheta, ftxz, ftyz, fq3]
         # load q
         if use_q:
             fq = f"{dout}q_timeseries_c{jz:03d}.out"
@@ -745,6 +751,7 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
             thetav_ts[:,jz] = np.loadtxt(ftv, skiprows=istart, usecols=1)
             fqw = f"{dout}wq_sgs_timeseries_c{jz:03d}.out"
             wq_sgs_ts[:,jz] = np.loadtxt(fqw, skiprows=istart, usecols=1)
+            fout_all += [fq, ftv, fqw]
     # apply scales
     u_ts *= u_scale
     v_ts *= u_scale
@@ -783,6 +790,12 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, nhr, tf, simlab
     fsave_ts = f"{dnc}timeseries_all_{nhr}h.nc"
     with ProgressBar():
         ts_all.to_netcdf(fsave_ts, mode="w")
+    
+    # optionally delete files
+    if del_raw:
+        print("Cleaning up raw files...")
+        for ff in fout_all:
+            os.system(f"rm {ff}")
         
     print(f"Finished saving timeseries for simulation {simlabel}")
 
