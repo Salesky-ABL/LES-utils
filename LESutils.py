@@ -41,7 +41,7 @@ def read_f90_bin(path, nx, ny, nz, precision):
     return dat
 # ---------------------------------------------
 def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt, 
-               use_dissip, use_q, simlabel, units=None):
+               use_dissip, use_q, simlabel, units=None, del_raw=False):
     """Read binary output files from LES code and combine into one netcdf
     file per timestep using xarray for future reading and easier analysis
 
@@ -54,11 +54,13 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     :param int t0: first timestep to process
     :param int t1: last timestep to process
     :param int dt: number of timesteps between files to load
-    :param bool use_dissip: flag for loading dissipation rate files (SBL only)
+    :param bool use_dissip: flag for loading dissipation rate files (les_brg only)
     :param bool use_q: flag for loading specific humidity files (les_brg only)
     :param str simlabel: unique identifier for batch of files
     :param dict units: dictionary of units corresponding to each loaded\
         variable. Default values hard-coded in this function
+    :param bool del_raw: automatically delete raw .out files from LES code\
+        to save space, default=False
     """
     # check if dnc exists
     if not os.path.exists(dnc):
@@ -101,6 +103,8 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
         tyz_in = read_f90_bin(f6,nx,ny,nz,8) * u_scale * u_scale
         f7 = f"{dout}q3_{timesteps[i]:07d}.out"
         q3_in = read_f90_bin(f7,nx,ny,nz,8) * u_scale * theta_scale
+        # list of all out files
+        fout_all = [f1, f2, f3, f4, f5, f6, f7]
         # interpolate w, txz, tyz, q3, wq_sgs to u grid
         # create DataArrays
         w_da = xr.DataArray(w_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
@@ -127,6 +131,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
             # read binary file
             fd = f"{dout}dissip_{timesteps[i]:07d}.out"
             diss_in = read_f90_bin(fd,nx,ny,nz,8) * u_scale * u_scale * u_scale / Lz
+            fout_all += fd
             # interpolate to u-nodes
             diss_da = xr.DataArray(diss_in, dims=("x", "y", "z"), 
                                    coords=dict(x=x, y=y, z=zw))
@@ -138,6 +143,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
             q_in = read_f90_bin(f8,nx,ny,nz,8) * q_scale
             f9 = f"{dout}wq_sgs_{timesteps[i]:07d}.out"
             wq_sgs_in = read_f90_bin(f9,nx,ny,nz,8) * u_scale * q_scale
+            fout_all += [f8, f9]
             # add q to data_save
             data_save["q"] = (["x","y","z"], q_in)
             # interpolate to u-nodes
@@ -199,6 +205,11 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
         fsave = f"{dnc}all_{timesteps[i]:07d}.nc"
         print(f"Saving file: {fsave.split(os.sep)[-1]}")
         ds.to_netcdf(fsave)
+
+        # delete files from this timestep if desired
+        if del_raw:
+            for ff in fout_all:
+                os.system(f"rm {ff}")
 
     print("Finished saving all files!")
     return
@@ -1084,4 +1095,4 @@ def calc_increments(nx, ny, nz, dat1, dat2):
     for jr in range(nx):
         Dout[jr,:,:] = delta2[jr,:,:] / rcount[jr]
     # return Dout(lag, y, z)
-    return Dout, rcount
+    return Dout
