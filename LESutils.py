@@ -131,7 +131,7 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
             # read binary file
             fd = f"{dout}dissip_{timesteps[i]:07d}.out"
             diss_in = read_f90_bin(fd,nx,ny,nz,8) * u_scale * u_scale * u_scale / Lz
-            fout_all += fd
+            fout_all += [fd]
             # interpolate to u-nodes
             diss_da = xr.DataArray(diss_in, dims=("x", "y", "z"), 
                                    coords=dict(x=x, y=y, z=zw))
@@ -1109,3 +1109,86 @@ def calc_increments(nx, ny, nz, dat1, dat2):
         Dout[jr,:,:] = delta2[jr,:,:] / rcount[jr]
     # return Dout(lag, y, z)
     return Dout
+# ---------------------------------------------
+def nc_rotate(dnc, t0, t1, dt):
+    """Purpose: load netcdf all_TTTTTTT.nc files and rotate coordinates
+    into mean streamwise flow using rot_interp, then save netcdf file with
+    new coordinates.
+    :param str dnc: absolute path to netcdf directory
+    :param int t0: starting timestep
+    :param int t1: ending timestep
+    :param int dt: number of files between timesteps
+    """
+    # determine list of file timesteps from input
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
+    # determine files to read from timesteps
+    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+    # BEGIN TIME LOOP
+    for jf, ff in enumerate(fall):
+        # load file
+        d = xr.load_dataset(ff)
+        # calculate wind angle
+        u_bar = d.u.mean(dim=("x","y")).compute()
+        v_bar = d.v.mean(dim=("x","y")).compute()
+        angle = np.arctan2(v_bar, u_bar)
+        # cos and sin of angle
+        ca = np.cos(angle).values
+        sa = np.sin(angle).values
+        # initialize empty Dataset to store rotated variables
+        Dsave = xr.Dataset()
+        # loop over variables to convert
+        # would like to use the following (basically ignore u_rot, v_rot)
+        vuse = ["u","v","w","theta","q","txz","tyz","q3","wq_sgs","dissip"]
+        # check against what is actually in d
+        vhave = [key for key in vuse if key in list(d.keys())]
+        # begin loop
+        for var in vhave:
+            # convert 3d dataarray to numpy
+            dat = d[var].to_numpy()
+            # rotate and interpolate
+            xhat, yhat, vrot = rot_interp(d.nx, d.ny, d.nz, d.Lx, d.Ly, 
+                                          d.dx, d.dy, ca, sa, dat)
+            # convert to dataarray again and assign to Dataset
+            # just use indices as dimension for new jx, jy since
+            # xhat, yhat depend on (x,y,z)
+            # this creates coorinates xhat(jx,jy,z) and yhat(jx,jy,z)
+            # so variable = var(xhat, yhat, z)
+            Dsave[var] = xr.DataArray(
+                            data=vrot,
+                            coords=dict(
+                                xhat=(["jx","jy","z"], xhat),
+                                yhat=(["jx","jy","z"], yhat),
+                                z=d.z),
+                            dims=dict(
+                                jx=np.arange(d.nx),
+                                jy=np.arange(d.ny),
+                                z=d.z))
+        # now need to re-rotate u and v to align with x-axis
+        u_bar_r = Dsave["u"].mean(dim=("jx","jy")).compute()
+        v_bar_r = Dsave["v"].mean(dim=("jx","jy")).compute()
+        angle_r = np.arctan2(v_bar_r, u_bar_r).compute()
+        # calculate using xarray implicit
+        Dsave["u_rot"] = Dsave.u*np.cos(angle_r) + Dsave.v*np.sin(angle_r)
+        Dsave["v_rot"] =-Dsave.u*np.sin(angle_r) + Dsave.v*np.cos(angle_r)
+        # would also like to calculate and store 1d positive-only values of
+        # new coordinates, call them rx and ry
+        rx, ry = [np.zeros((d.nx,d.nz), dtype=np.float64) for _ in range(2)]
+        for jz in range(d.nz):
+            dxhat = np.abs(xhat[1,0,jz] - xhat[0,0,jz])
+            rx[:,jz] = np.linspace(0, d.nx*dxhat, d.nx)
+            dyhat = np.abs(yhat[0,1,jz] - yhat[0,0,jz])
+            ry[:,jz] = np.linspace(0, d.ny*dyhat, d.ny)
+        # add to Dsave
+        Dsave["rx"] = xr.DataArray(data=rx,
+                                   coords=dict(jx=Dsave.jx, z=Dsave.z))
+        Dsave["ry"] = xr.DataArray(data=ry,
+                                   coords=dict(jy=Dsave.jy, z=Dsave.z))
+        # copy over attrs
+        Dsave.attrs = d.attrs
+        # save to netcdf file and continue
+        fsave = f"{dnc}all_{timesteps[jf]:07d}_rot.nc"
+        print(f"Saving file: {fsave.split(os.sep)[-1]}")
+        Dsave.to_netcdf(fsave, mode="w")
+    
+    print("Finished saving all files!")
+    return

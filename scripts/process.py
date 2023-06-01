@@ -10,7 +10,7 @@ import sys
 sys.path.append("..")
 import yaml
 from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf, load_full,\
-                     load_stats, load_timeseries
+                     load_stats, load_timeseries, nc_rotate
 from spec import autocorr_1d, autocorr_2d, spectrogram, amp_mod
 
 # load yaml file
@@ -24,7 +24,8 @@ if config["sim2nc"]:
     print("Begin sim2netcdf...")
     sim2netcdf(config["dout"], config["dnc"], config["res"], config["dim"], 
                config["scales"], config["t0"], config["t1"], config["dt"], 
-               config["use_dissip"], config["use_q"], config["simlab"])
+               config["use_dissip"], config["use_q"], config["simlab"],
+               del_raw=config["del_raw"])
     print("Finished sim2netcdf!")
 
 # calc_stats
@@ -49,9 +50,13 @@ if config["ts2nc"]:
     timeseries2netcdf(config["dout"], config["dnc"], config["scales"],
                       config["use_q"], config["delta_t"], config["res"][2], 
                       config["dim"][2], config["nhr"], config["tf"], 
-                      config["simlab"])
+                      config["simlab"], del_raw=config["del_raw"])
     print("Finished timeseries2netcdf!")
 
+# nc_rotate
+if config["ncrot"]:
+    print("Begin nc_rotate...")
+    nc_rotate(config["dnc"], config["t0"], config["t1"], config["dt"])
 #
 # Spectral analysis functions - requires loading files first
 #

@@ -7,9 +7,9 @@
 # for use with process.py
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/u01_tw24_qw10_dry2/output/"
+dout: "/home/bgreene/simulations/u15_tw10_qw04_dry/output/"
 # name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/u01_tw24_qw10_dry2/output/netcdf/"
+dnc: "/home/bgreene/simulations/u15_tw10_qw04_dry/output/netcdf/"
 # simulation parameters
 # first timestep to load
 t0: 360000
@@ -20,7 +20,7 @@ dt: 1000
 # dimensional timestep
 delta_t: 0.05
 # simulation resolution
-res: [128, 128, 128]
+res: [140, 140, 140]
 # simulation domain size in m
 dim: [12000, 12000, 2000]
 # dimensional scales for [u, theta, q]
@@ -30,11 +30,13 @@ use_dissip: True
 # use moisture fields
 use_q: True
 # simulation label
-simlab: "u01_tw24_qw10_dry2"
+simlab: "u15_tw10_qw04_dry"
 # averaging period
 tavg: "5-6h"
 # detrend for calc_stats
 detrend: True
+# delete raw .out files
+del_raw: True
 # timeseries specific flags
 # number of hours to load
 nhr: 1
@@ -48,9 +50,10 @@ fstats: "mean_stats_xyt_5-6h.nc"
 sim2nc: False
 calcstats: False
 statslong: False
-ts2nc: True
+ts2nc: False
+ncrot: True
 # flags for running spec functions
 ac1d: False
 ac2d: False
 spec: False
-AM: True
+AM: False
