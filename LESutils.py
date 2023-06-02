@@ -1110,6 +1110,55 @@ def calc_increments(nx, ny, nz, dat1, dat2):
     # return Dout(lag, y, z)
     return Dout
 # ---------------------------------------------
+def xr_rotate(df):
+    """Use rot_interp to rotate 3D Dataset and convert to a new
+    Dataset with rotated coordinate system (x,y,z)
+    :param Dataset df: 3-dimensional Dataset to rotate
+    returns df_rot 3D Dataset
+    """
+    # some dimensions
+    nx, ny, nz = df.nx, df.ny, df.nz
+    Lx, Ly = df.Lx, df.Ly
+    dx, dy = df.dx, df.dy
+    x, y, z = df.x, df.y, df.z
+    # would like to use the following vars (basically ignore u_rot, v_rot)
+    vuse = ["u","v","w","theta","q","txz","tyz","q3","wq_sgs","dissip"]
+    # check against what is actually in df
+    vhave = [key for key in vuse if key in list(df.keys())]
+    # initialize empty Dataset to store rotated data
+    df_rot = xr.Dataset()
+    # calculate wind angles
+    u = df.u
+    v = df.v
+    # mean u, v
+    u_bar = u.mean(dim=("x","y")).compute()
+    v_bar = v.mean(dim=("x","y")).compute()
+    # calc angle
+    angle = np.arctan2(v_bar, u_bar)
+    # angle cos and sin
+    ca = np.cos(angle).values
+    sa = np.sin(angle).values
+    # loop over variables
+    for var in vhave:
+        # convert 3d dataarray to numpy
+        dat = df[var].to_numpy()
+        # rotate and interpolate
+        _, _, vrot = rot_interp(nx, ny, nz, Lx, Ly, dx, dy, ca, sa, dat)
+        # add vrot to df_jt as DataArray
+        # has same x,y,z dimensions as original data!
+        df_rot[var] = xr.DataArray(data=vrot, coords=dict(x=x, y=y, z=z))
+    # now recalculate u_rot, v_rot
+    u_bar_r = df_rot["u"].mean(dim=("x","y")).compute()
+    v_bar_r = df_rot["v"].mean(dim=("x","y")).compute()
+    angle_r = np.arctan2(v_bar_r, u_bar_r).compute()
+    # calculate using xarray implicit
+    df_rot["u_rot"] = df_rot.u*np.cos(angle_r) + df_rot.v*np.sin(angle_r)
+    df_rot["v_rot"] =-df_rot.u*np.sin(angle_r) + df_rot.v*np.cos(angle_r)
+    # add attrs from df
+    df_rot.attrs = df.attrs
+    # return
+    return df_rot
+# ---------------------------------------------
 def nc_rotate(dnc, t0, t1, dt):
     """Purpose: load netcdf all_TTTTTTT.nc files and rotate coordinates
     into mean streamwise flow using rot_interp, then save netcdf file with
@@ -1127,64 +1176,8 @@ def nc_rotate(dnc, t0, t1, dt):
     for jf, ff in enumerate(fall):
         # load file
         d = xr.load_dataset(ff)
-        # calculate wind angle
-        u_bar = d.u.mean(dim=("x","y")).compute()
-        v_bar = d.v.mean(dim=("x","y")).compute()
-        angle = np.arctan2(v_bar, u_bar)
-        # cos and sin of angle
-        ca = np.cos(angle).values
-        sa = np.sin(angle).values
-        # initialize empty Dataset to store rotated variables
-        Dsave = xr.Dataset()
-        # loop over variables to convert
-        # would like to use the following (basically ignore u_rot, v_rot)
-        vuse = ["u","v","w","theta","q","txz","tyz","q3","wq_sgs","dissip"]
-        # check against what is actually in d
-        vhave = [key for key in vuse if key in list(d.keys())]
-        # begin loop
-        for var in vhave:
-            # convert 3d dataarray to numpy
-            dat = d[var].to_numpy()
-            # rotate and interpolate
-            xhat, yhat, vrot = rot_interp(d.nx, d.ny, d.nz, d.Lx, d.Ly, 
-                                          d.dx, d.dy, ca, sa, dat)
-            # convert to dataarray again and assign to Dataset
-            # just use indices as dimension for new jx, jy since
-            # xhat, yhat depend on (x,y,z)
-            # this creates coorinates xhat(jx,jy,z) and yhat(jx,jy,z)
-            # so variable = var(xhat, yhat, z)
-            Dsave[var] = xr.DataArray(
-                            data=vrot,
-                            coords=dict(
-                                xhat=(["jx","jy","z"], xhat),
-                                yhat=(["jx","jy","z"], yhat),
-                                z=d.z),
-                            dims=dict(
-                                jx=np.arange(d.nx),
-                                jy=np.arange(d.ny),
-                                z=d.z))
-        # now need to re-rotate u and v to align with x-axis
-        u_bar_r = Dsave["u"].mean(dim=("jx","jy")).compute()
-        v_bar_r = Dsave["v"].mean(dim=("jx","jy")).compute()
-        angle_r = np.arctan2(v_bar_r, u_bar_r).compute()
-        # calculate using xarray implicit
-        Dsave["u_rot"] = Dsave.u*np.cos(angle_r) + Dsave.v*np.sin(angle_r)
-        Dsave["v_rot"] =-Dsave.u*np.sin(angle_r) + Dsave.v*np.cos(angle_r)
-        # would also like to calculate and store 1d positive-only values of
-        # new coordinates, call them rx and ry
-        rx, ry = [np.zeros((d.nx,d.nz), dtype=np.float64) for _ in range(2)]
-        for jz in range(d.nz):
-            dxhat = np.abs(xhat[1,0,jz] - xhat[0,0,jz])
-            rx[:,jz] = np.linspace(0, d.nx*dxhat, d.nx)
-            dyhat = np.abs(yhat[0,1,jz] - yhat[0,0,jz])
-            ry[:,jz] = np.linspace(0, d.ny*dyhat, d.ny)
-        # add to Dsave
-        Dsave["rx"] = xr.DataArray(data=rx,
-                                   coords=dict(jx=Dsave.jx, z=Dsave.z))
-        Dsave["ry"] = xr.DataArray(data=ry,
-                                   coords=dict(jy=Dsave.jy, z=Dsave.z))
-        # copy over attrs
-        Dsave.attrs = d.attrs
+        # use xr_rotate to rotate this Dataset
+        Dsave = xr_rotate(d)
         # save to netcdf file and continue
         fsave = f"{dnc}all_{timesteps[jf]:07d}_rot.nc"
         print(f"Saving file: {fsave.split(os.sep)[-1]}")
