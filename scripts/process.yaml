@@ -20,7 +20,7 @@ dt: 1000
 # dimensional timestep
 delta_t: 0.05
 # simulation resolution
-res: [140, 140, 140]
+res: [128, 128, 128]
 # simulation domain size in m
 dim: [12000, 12000, 2000]
 # dimensional scales for [u, theta, q]
@@ -46,6 +46,8 @@ tf: 432000
 SBL: False
 # name of stats file to load, if applicable
 fstats: "mean_stats_xyt_5-6h.nc"
+# use rotated files, if applicable
+use_rot: True
 # flags for running functions
 sim2nc: False
 calcstats: False
@@ -55,5 +57,5 @@ ncrot: True
 # flags for running spec functions
 ac1d: False
 ac2d: False
-spec: False
+spec: True
 AM: False

@@ -11,7 +11,7 @@ sys.path.append("..")
 import yaml
 from LESutils import sim2netcdf, calc_stats, calc_stats_long, timeseries2netcdf, load_full,\
                      load_stats, load_timeseries, nc_rotate
-from spec import autocorr_1d, autocorr_2d, spectrogram, amp_mod
+from spec import autocorr_1d, autocorr_2d, spectrogram, spectrogram_rot, amp_mod
 
 # load yaml file
 fyaml = "/home/bgreene/LES-utils/scripts/process.yaml"
@@ -63,7 +63,7 @@ if config["ncrot"]:
 if (config["ac1d"] or config["ac2d"] or config["spec"]):
     dd, s = load_full(config["dnc"], config["t0"], config["t1"], config["dt"],
                       config["delta_t"], SBL=config["SBL"], 
-                      stats=config["fstats"])
+                      stats=config["fstats"], rotate=config["use_rot"])
 
 # 1d autocorrelation
 if config["ac1d"]:
