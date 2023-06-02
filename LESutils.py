@@ -1161,7 +1161,7 @@ def xr_rotate(df):
     # add attrs from df
     df_rot.attrs = df.attrs
     # add another attribute for rotate
-    df_rot.attrs["rotate"] = True
+    df_rot.attrs["rotate"] = "True"
     # return
     return df_rot
 # ---------------------------------------------
