@@ -637,7 +637,7 @@ def load_stats(fstats, SBL=False, display=False):
 
     return dd
 # ---------------------------------------------
-def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
+def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None, rotate=False):
     """Reading function for multiple instantaneous volumetric netcdf files
     Load netcdf files using xarray
     :param str dnc: abs path directory for location of netcdf files
@@ -645,8 +645,9 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
     :param int t1: last timestep to process
     :param int dt: number of timesteps between files to load
     :param float delta_t: dimensional timestep in simulation (seconds)
-    :param bool SBL: calculate SBL-specific parameters. defaulte=False
+    :param bool SBL: calculate SBL-specific parameters. default=False
     :param str stats: name of statistics file. default=None
+    :param bool rotate: use rotated netcdf files. default=False
 
     :return dd: xarray dataset of 4d volumes
     :return s: xarray dataset of statistics file
@@ -654,7 +655,10 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None):
     # load individual files into one dataset
     timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
     # determine files to read from timesteps
-    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+    if rotate:
+        fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    else:
+        fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
     nf = len(fall)
     # calculate array of times represented by each file
     times = np.array([i*delta_t*dt for i in range(nf)])
@@ -1156,6 +1160,8 @@ def xr_rotate(df):
     df_rot["v_rot"] =-df_rot.u*np.sin(angle_r) + df_rot.v*np.cos(angle_r)
     # add attrs from df
     df_rot.attrs = df.attrs
+    # add another attribute for rotate
+    df_rot.attrs["rotate"] = True
     # return
     return df_rot
 # ---------------------------------------------
