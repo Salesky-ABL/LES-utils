@@ -110,7 +110,7 @@ def autocorr_2d(dnc, df, timeavg=True):
     print("Finished computing 2d autocorrelation functions!")
     return
 # --------------------------------
-def spectrogram(dnc, df, detrend="constant"):
+def spectrogram(dnc, df, detrend="constant", use_q=True):
     """Input 4D xarray Dataset with loaded LES data to calculate
     power spectral density along x-direction, then average in
     y and time. Calculate for u', w', theta', q', u'w', theta'w',
@@ -121,6 +121,7 @@ def spectrogram(dnc, df, detrend="constant"):
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
     :param str detrend: how to detrend along x-axis before processing,\
         default="constant" (also accepts "linear")
+    :param bool use_q: flag to use specific humidity data, default=True
     """
     # construct Dataset to save
     Esave = xr.Dataset(data_vars=None, attrs=df.attrs)
@@ -128,44 +129,39 @@ def spectrogram(dnc, df, detrend="constant"):
     Esave.attrs["detrend_type"] = str(detrend)
 
     # variables to loop over for calculations
-    vall = ["u_rot", "w", "theta", "q"]
-    vsave = ["uu", "ww", "tt", "qq"]
+    vall = ["u_rot", "w", "theta"]
+    vsave = ["uu", "ww", "tt"]
+    if use_q:
+        vall.append("q")
+        vsave.append("qq")
 
     # loop over variables
     for v, vs in zip(vall, vsave):
         # grab data
         din = df[v]
-        # detrend
-        # subtract mean by default, or linear if desired
-        dfluc = xrft.detrend(din, dim="x", detrend_type=detrend)
-        # normalize by standard deviation
-        dnorm = dfluc / dfluc.std(dim="x")
         # calculate PSD using xrft
-        PSD = xrft.power_spectrum(dnorm, dim="x", true_phase=True, 
-                                  true_amplitude=True)
+        PSD = xrft.power_spectrum(din, dim="x", true_phase=True, 
+                                  true_amplitude=True, detrend_type=detrend)
         # average in y and time, take only real values
         PSD_ytavg = PSD.mean(dim=("time","y"))
         # store in Esave
         Esave[vs] = PSD_ytavg.real
 
     # variables to loop over for cross spectra
-    vall2 = [("u_rot", "w"), ("theta", "w"), ("q", "w"), ("theta", "q")]
-    vsave2 = ["uw", "tw", "qw", "tq"]
+    vall2 = [("u_rot", "w"), ("theta", "w")]
+    vsave2 = ["uw", "tw"]
+    if use_q:
+        vall2 += [("q", "w"), ("theta", "q")]
+        vsave2 += ["qw", "tq"]
 
     # loop over variables
     for v, vs in zip(vall2, vsave2):
         # grab data
         din1, din2 = df[v[0]], df[v[1]]
-        # detrend
-        # subtract mean by default, or linear if desired
-        dfluc1 = xrft.detrend(din1, dim="x", detrend_type=detrend)
-        dfluc2 = xrft.detrend(din2, dim="x", detrend_type=detrend)
-        # normalize by standard deviation
-        dnorm1 = dfluc1 / dfluc1.std(dim="x")
-        dnorm2 = dfluc2 / dfluc2.std(dim="x")
         # calculate cross spectrum using xrft
-        PSD = xrft.cross_spectrum(dnorm1, dnorm2, dim="x", scaling="density",
-                                  true_phase=True, true_amplitude=True)
+        PSD = xrft.cross_spectrum(din1, din2, dim="x", scaling="density",
+                                  true_phase=True, true_amplitude=True,
+                                  detrend_type=detrend)
         # average in y and time, take only real values
         PSD_ytavg = PSD.mean(dim=("time","y"))
         # store in Esave
@@ -305,4 +301,86 @@ def amp_mod(dnc, ts, s):
     with ProgressBar():
         R.to_netcdf(fsavenc, mode="w")
 
+    return
+# --------------------------------
+def LCS(dat1, dat2, zi=None, zzi=None):
+    """Calculate linear coherence spectra between two 4D DataArrays
+    at a selected level, or at all heights. Return DataArray.
+    :param DataArray dat1: first variable to compare
+    :param DataArray dat2: second variable to compare (optional)
+    :param float zi: height of ABL depth in m; default=None
+    :param float zzi: if None, compute at all levels; if float, use reference\
+        height zzi in terms of z/zi. Default=None
+    """
+    # compute forward FFT of dat1 (will use regardless of compute mode)
+    F1 = xrft.fft(dat1, dim="x", true_phase=True, true_amplitude=True,
+                  detrend="linear")
+    # check zzi: if not None, compute LCS @ z/zi=zzi; else, compute for all z
+    if ((zzi is not None) & (zi is not None)):
+        izr = abs((dat1.z/zi).values - zzi).argmin()
+        # calculate Gamma^2
+        G2 = np.absolute((F1 * F1.isel(z=izr).conj()).mean(dim=("y","time"))) ** 2./\
+                ((np.absolute(F1)**2.).mean(dim=("y","time")) *\
+                 (np.absolute(F1.isel(z=izr))**2.).mean(dim=("y","time")))
+        # Finished - return
+        return G2
+    else:
+        # calc between 2 variables at all heights
+        F2 = xrft.fft(dat2, dim="x", true_phase=True, true_amplitude=True,
+                      detrend="linear")
+        G2 = np.absolute((F1 * F2.conj()).mean(dim=("y","time"))) ** 2. /\
+                ((np.absolute(F1)**2.).mean(dim=("y","time")) *\
+                 (np.absolute(F2)**2.).mean(dim=("y","time")))
+        # Finished - return
+        return G2
+# --------------------------------
+def nc_LCS(dnc, df, zi, zzi_list, const_zr_varlist, const_zr_savelist, 
+           all_zr_pairs, all_zr_savelist):
+    """Purpose: use LCS function to calculate LCS at desired values of zr
+    and combinations of variables. Save netcdf.
+    :param str dnc: absolute path to directory for saving files
+    :param xarray.Dataset df: full dataset with dimensions (time,x,y,z)
+    :param float zi: ABL depth
+    :param list<float> zzi_list: list of values of z/zi to use as zr
+    :param list<str> const_zr_varlist: list of variables to calculate at\
+        corresponding list of zr in zzi_list
+    :param list<str> const_zr_savelist: list of variable names to use\
+        as keys for saving in Dataset with const_zr_varlist
+    :param list<str> all_zr_pairs: list of variable pairs for desired\
+        LCS calculation at all reference heights
+    :param list<str> all_zr_savelist: list of variable names to use\
+        as keys for saving in Dataset with all_zr_pairs
+    """
+    # initialize empty Dataarray with same attrs as df
+    Gsave = xr.Dataset(data_vars=None, attrs=df.attrs)
+    # first calculate LCS for each value of z/zi and each variable
+    # begin loop over zzi
+    for j, jz in enumerate(zzi_list):
+        # add z[jz] as attr in Gsave
+        Gsave.attrs[f"zr{j}"] = df.z.isel(z=jz).values
+        # loop over variables and calculate LCS
+        for var, vsave in zip(const_zr_varlist, const_zr_savelist):
+            # compute
+            Gsave[f"{vsave}{j}"] = LCS(df[var], None, zi, jz)
+    # compute LCS for 2 variables at all heights
+    for pair, vsave in zip(all_zr_pairs, all_zr_savelist):
+        Gsave[vsave] = LCS(df[pair[0]], df[pair[1]])
+    # only keep positive frequencies
+    Gsave = Gsave.where(Gsave.freq_x > 0., drop=True)
+    # save file
+    # check if rotate attr exists
+    if "rotate" in df.attrs.keys():
+        if bool(df.rotate):
+            fsave = f"{dnc}G2_rot.nc"
+        else:
+            fsave = f"{dnc}G2.nc"
+    else:
+        fsave = f"{dnc}G2.nc"
+    # delete old file if exists
+    if os.path.exists(fsave):
+        os.system(f"rm {fsave}")
+    print(f"Saving file: {fsave}")
+    with ProgressBar():
+        Gsave.to_netcdf(fsave, mode="w")
+    print("Finished nc_LCS!")
     return
