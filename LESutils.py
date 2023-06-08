@@ -14,6 +14,7 @@ import xarray as xr
 import numpy as np
 from numba import njit
 from dask.diagnostics import ProgressBar
+from scipy.interpolate import RegularGridInterpolator
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
@@ -1038,8 +1039,7 @@ def ec_tow(ts, h, time_average=1800.0, time_start=0.0):
     # only return ec where z <= h
     return ec_.where(ec_.z <= h, drop=True)
 # ---------------------------------------------
-@njit
-def rot_interp(nx, ny, nz, Lx, Ly, dx, dy, ca, sa, dat):
+def coord_rotate_3D(nx, ny, nz, Lx, Ly, x, y, ca, sa, dat):
     """Rotate 3D field into new coordinate system aligned with mean
     wind at each height, interpolated into new grid.
     :param int nx: number of points in x-dimension
@@ -1047,45 +1047,39 @@ def rot_interp(nx, ny, nz, Lx, Ly, dx, dy, ca, sa, dat):
     :param int nz: number of points in x-dimension
     :param float Lx: size of domain in x-dimension
     :param float Ly: size of domain in y-dimension
-    :param float dx: grid spacing in x-dimension
-    :param float dy: grid spacing in y-dimension
+    :param list<Quantity> x: array of original x-axis values
+    :param list<Quantity> y: array of original y-axis values
     :param ndarray ca: cosine of mean wind direction
     :param ndarray sa: sine of mean wind direction
     :param ndarray dat: 3-dimensional field to be rotated
-    return x_hat, y_hat, dat_r: new x and y coordinate pairs and rotated field
-    """
+    return dat_r: rotated field
+    """    
+    # create big 3d array of repeating dat variable 
+    # to use as reference points when interpolating
+    datbig = np.zeros((4*nx, 4*ny, nz), dtype=np.float64)
+    for jx in range(4):
+        for jy in range(4):
+            datbig[jx*nx:(jx+1)*nx,jy*ny:(jy+1)*ny,:] = dat
+    # create lab frame coordinates to match big variable array
+    xbig = np.linspace(-2*Lx, 2*Lx, 4*nx)
+    ybig = np.linspace(-2*Ly, 2*Ly, 4*ny)
+    # create empty array to store interpolated values
+    datinterp = np.zeros((nx, ny, nz), dtype=np.float64)
+    # create meshgrid of lab coordinates
+    xx, yy = np.meshgrid(x, y, indexing="xy")
+    # begin loop over z
+    for jz in range(nz):
+        # calculate meshgrid of rotated reference frame at this height
+        xxp = xx*ca[jz] - yy*sa[jz]
+        yyp = xx*sa[jz] + yy*ca[jz]
+        # create interpolator object for 2d slice of variable at jz
+        interp = RegularGridInterpolator((xbig, ybig), datbig[:,:,jz])
+        # create array of new coords to use
+        points = np.array([xxp.ravel(), yyp.ravel()]).T
+        # interpolate and store in variable array
+        datinterp[:,:,jz] = interp(points, method="linear").reshape(nx, ny)
 
-    # initialize empty arrays for interpolated grid
-    x_hat, y_hat = [np.zeros((nx, ny, nz), dtype=np.float64) for _ in range(2)]
-    # initialize empty rotated data array
-    dat_r = np.zeros((nx, ny, nz), dtype=np.float64)
-    # loop over old x and y
-    for jx in range(nx):
-        for jy in range(ny):
-            # calc positions of rotated coords (x_hat, y_hat) in old coords (x, y)
-            x_hat[jx,jy,:] = np.fmod(jx*dx, Lx)*ca + np.fmod(-jy*dy, Ly)*sa
-            y_hat[jx,jy,:] = np.fmod(jx*dx, Lx)*sa + np.fmod( jy*dy, Ly)*ca
-            # perform interpolation
-            for jz in range(nz):
-                # indices
-                i1 = int(np.fmod(np.floor(x_hat[jx,jy,jz]/dx), nx))
-                j1 = int(np.fmod(np.floor(y_hat[jx,jy,jz]/dy), ny))
-                i2 = int(np.fmod(i1, nx))
-                j2 = int(np.fmod(j1, ny))
-                # calculate weights
-                x1 = np.fmod(x_hat[jx,jy,jz], dx) / dx
-                x2 = np.fmod(y_hat[jx,jy,jz], dy) / dy
-                w1 = (1. - x1) * (1. - x2)
-                w2 = (   x1  ) * (1. - x2)
-                w3 = (1. - x1) * (   x2  )
-                w4 = (   x1  ) * (   x2  )
-                # interpolate
-                dat_r[jx,jy,jz] = dat[i1,j1,jz]*w1 +\
-                                  dat[i2,j1,jz]*w2 +\
-                                  dat[i1,j2,jz]*w3 +\
-                                  dat[i2,j2,jz]*w4
-    
-    return x_hat, y_hat, dat_r
+    return datinterp
 # ---------------------------------------------
 @njit
 def calc_increments(nx, ny, nz, dat1, dat2):
@@ -1115,7 +1109,7 @@ def calc_increments(nx, ny, nz, dat1, dat2):
     return Dout
 # ---------------------------------------------
 def xr_rotate(df):
-    """Use rot_interp to rotate 3D Dataset and convert to a new
+    """Use coord_rotate_3D to rotate 3D Dataset and convert to a new
     Dataset with rotated coordinate system (x,y,z)
     :param Dataset df: 3-dimensional Dataset to rotate
     returns df_rot 3D Dataset
@@ -1123,7 +1117,6 @@ def xr_rotate(df):
     # some dimensions
     nx, ny, nz = df.nx, df.ny, df.nz
     Lx, Ly = df.Lx, df.Ly
-    dx, dy = df.dx, df.dy
     x, y, z = df.x, df.y, df.z
     # would like to use the following vars (basically ignore u_rot, v_rot)
     vuse = ["u","v","w","theta","q","txz","tyz","q3","wq_sgs","dissip"]
@@ -1147,7 +1140,7 @@ def xr_rotate(df):
         # convert 3d dataarray to numpy
         dat = df[var].to_numpy()
         # rotate and interpolate
-        _, _, vrot = rot_interp(nx, ny, nz, Lx, Ly, dx, dy, ca, sa, dat)
+        vrot = coord_rotate_3D(nx, ny, nz, Lx, Ly, x, y, ca, sa, dat)
         # add vrot to df_jt as DataArray
         # has same x,y,z dimensions as original data!
         df_rot[var] = xr.DataArray(data=vrot, coords=dict(x=x, y=y, z=z))
