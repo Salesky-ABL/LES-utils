@@ -174,7 +174,7 @@ def spectrogram(dnc, df, detrend="constant", use_q=True):
     # check if rotate attr exists
     if "rotate" in df.attrs.keys():
         if bool(df.rotate):
-            fsave = f"{dnc}spectrogram_rot.nc"
+            fsave = f"{dnc}spectrogram_rot2.nc"
         else:
             fsave = f"{dnc}spectrogram.nc"
     else:
@@ -355,13 +355,16 @@ def nc_LCS(dnc, df, zi, zzi_list, const_zr_varlist, const_zr_savelist,
     Gsave = xr.Dataset(data_vars=None, attrs=df.attrs)
     # first calculate LCS for each value of z/zi and each variable
     # begin loop over zzi
-    for j, jz in enumerate(zzi_list):
+    for j, jzi in enumerate(zzi_list):
+        # compute closest value of z/zi given jzi (jzi=value from 0-1)
+        # jz will be corresponding z index closest to jzi
+        jz = abs((df.z/zi).values - jzi).argmin()
         # add z[jz] as attr in Gsave
         Gsave.attrs[f"zr{j}"] = df.z.isel(z=jz).values
         # loop over variables and calculate LCS
         for var, vsave in zip(const_zr_varlist, const_zr_savelist):
             # compute
-            Gsave[f"{vsave}{j}"] = LCS(df[var], None, zi, jz)
+            Gsave[f"{vsave}{j}"] = LCS(df[var], None, zi, jzi)
     # compute LCS for 2 variables at all heights
     for pair, vsave in zip(all_zr_pairs, all_zr_savelist):
         Gsave[vsave] = LCS(df[pair[0]], df[pair[1]])
