@@ -7,45 +7,45 @@
 # for use with process.py
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/u15_tw10_qw04_dry/output/"
+dout: "/home/bgreene/simulations/cr0.33_u08_192/output/"
 # name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/u15_tw10_qw04_dry/output/netcdf/"
+dnc: "/home/bgreene/simulations/cr0.33_u08_192/output/netcdf/"
 # simulation parameters
 # first timestep to load
-t0: 360000
+t0: 1080000
 # last timestep to load
-t1: 432000
+t1: 1260000
 # number of timesteps between files to load
 dt: 1000
 # dimensional timestep
-delta_t: 0.05
+delta_t: 0.02
 # simulation resolution
-res: [128, 128, 128]
+res: [192, 192, 192]
 # simulation domain size in m
-dim: [12000, 12000, 2000]
+dim: [800, 800, 400]
 # dimensional scales for [u, theta, q]
 scales: [0.4, 300, 1000]
 # use output dissipation files
 use_dissip: True
 # use moisture fields
-use_q: True
+use_q: False
 # simulation label
-simlab: "u15_tw10_qw04_dry"
+simlab: "cr0.33_u08_192"
 # averaging period
-tavg: "5-6h"
+tavg: "9-10h"
 # detrend for calc_stats
 detrend: True
 # delete raw .out files
-del_raw: True
+del_raw: False
 # timeseries specific flags
 # number of hours to load
 nhr: 1
 # final timestep to count backwards from
-tf: 432000
+tf: 1260000
 # flag for SBL
-SBL: False
+SBL: True
 # name of stats file to load, if applicable
-fstats: "mean_stats_xyt_5-6h.nc"
+fstats: "mean_stats_xyt_9-10h.nc"
 # use rotated files, if applicable
 use_rot: True
 # flags for running functions
