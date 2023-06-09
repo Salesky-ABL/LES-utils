@@ -7,9 +7,9 @@
 # for use with process.py
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/cr0.33_u08_192/output/"
+dout: "/home/bgreene/simulations/cr0.10_u08_192/output/"
 # name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/cr0.33_u08_192/output/netcdf/"
+dnc: "/home/bgreene/simulations/cr0.10_u08_192/output/netcdf/"
 # simulation parameters
 # first timestep to load
 t0: 1080000
@@ -30,7 +30,7 @@ use_dissip: True
 # use moisture fields
 use_q: False
 # simulation label
-simlab: "cr0.33_u08_192"
+simlab: "cr0.10_u08_192"
 # averaging period
 tavg: "9-10h"
 # detrend for calc_stats
