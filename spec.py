@@ -387,3 +387,170 @@ def nc_LCS(dnc, df, zi, zzi_list, const_zr_varlist, const_zr_savelist,
         Gsave.to_netcdf(fsave, mode="w")
     print("Finished nc_LCS!")
     return
+# --------------------------------
+def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
+             cond_scale, varlist, varscale_list, svarlist):
+    """Purpose: calculate conditionally averaged fields
+    For example, if cond_var is u, cond_thresh is -2:
+    u'(x,y,z=jz) < -2*sigma_u
+    Only load one file at a time
+    Return xarray Dataset
+    :param str dnc: directory for loading files
+    :param int t0: starting timestep
+    :param int t1: final timestep to load
+    :param int dt: number of timesteps in between files
+    :param bool use_rot: use rotated fields
+    :param xr.Dataset s: statistics Dataset for useful parameters
+    :param str cond_var: variable name used as condition
+    :param float cond_thresh: number of standard deviations as threshold for condition.\
+        if negative, cond is < cond_thresh; if positive, cond is > cond_thresh
+    :param int cond_jz: z index desired to enforce condition
+    :param float cond_scale: value to normalize condition by, e.g. ustar, tstar
+    :param list<str> varlist: list of variables to conditionally average
+    :param list<str> varscale_list: list of scales to normalize varaibles in varlist
+    :param list<str> svarlist: list of variable save names corresponding to varlist
+    """
+    #  timesteps for loading files
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
+    # determine files to read from timesteps
+    if use_rot:
+        fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    else:
+        fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+    nf = len(fall)
+    # grab some useful params from stats file
+    dx = s.dx
+    nx = s.nx
+    ny = s.ny
+    nz = s.nz
+    #
+    # determine cutoff value: read middle volume file
+    #
+    dd = xr.load_dataset(fall[nf//2])
+    # if cond_var is u_rot, check for use_rot to see if variable exists
+    if cond_var == "u_rot":
+        # if use_rot, just use u_rot for next step; otherwise, 
+        # need to calculate u_rot
+        if not use_rot:
+            # calculate u_rot
+            u_mean = dd.u.mean(dim=("x","y"))
+            v_mean = dd.v.mean(dim=("x","y"))
+            angle = np.arctan2(v_mean, u_mean)
+            dd["u_rot"] = dd.u*np.cos(angle) + dd.v*np.sin(angle)
+            dd["v_rot"] =-dd.u*np.sin(angle) + dd.v*np.cos(angle)    
+        # now use u_rot to calculate mean and std of u'/u*
+        dd["u_p"] = (dd.u_rot - dd.u_rot.mean(dim=("x","y"))) / s.ustar0
+        # calculate mean and std of u'/u*
+        mu = dd.u_p.mean(dim=("x","y"))
+        std = dd.u_p.std(dim=("x","y"))
+        # real quick, also create keyname for u_rot
+        cond_svar = "u"
+    # calculate condition mu and std for other possible variables
+    else:
+        cond_p = (dd[cond_var] - dd[cond_var].mean(dim=("x","y"))) / cond_scale
+        mu = cond_p.mean(dim=("x","y"))
+        std = cond_p.std(dim=("x","y"))
+        cond_svar = cond_var
+    # calculate alpha cutoffs based on mu, std, cond_thresh, and cond_jz
+    alpha = mu[cond_jz] + cond_thresh*std[cond_jz]
+    #
+    # Prepare arrays for conditional averaging
+    #
+    # max points to include
+    n_delta = int(s.h/dx)
+    # number of points upstream and downstream to include
+    n_min = 3*n_delta
+    n_max = 3*n_delta
+    # initialize conditionally averaged arrays: one for each variable in varlist
+    # do this in a dictionary
+    condall = {}
+    for svar in svarlist:
+        # take time to create keys here; will use same for saving out in Dataset later
+        # see if condition is hi or lo
+        if cond_thresh > 0:
+            hilo = "hi"
+        else:
+            hilo = "lo"
+        key = f"{svar}_cond_{cond_svar}_{hilo}"
+        condall[key] = np.zeros((n_min+n_max, nz), dtype=np.float64)
+    # initialize counter for number of points satisfying condition
+    ncond = 0
+    #
+    # BEGIN LOOP OVER FILES
+    #
+    for ff in fall:
+        # load file
+        print(f"Loading file: {ff}")
+        dd = xr.load_dataset(ff)
+        # rotate velocities if not use_rot and u_rot in varlist
+        if ((not use_rot) & ("u_rot" in varlist)):
+            u_mean = dd.u.mean(dim=("x","y"))
+            v_mean = dd.v.mean(dim=("x","y"))
+            angle = np.arctan2(v_mean, u_mean)
+            dd["u_rot"] = dd.u*np.cos(angle) + dd.v*np.sin(angle)
+            dd["v_rot"] =-dd.u*np.sin(angle) + dd.v*np.cos(angle)
+        # compute normalized values, store in dd
+        # create big arrays for each variable in var so we dont have to deal
+        # with periodicity
+        varbig = {}
+        for var, svar, scale in zip(varlist, svarlist, varscale_list):
+            # normalized values
+            key = f"{svar}_p"
+            dd[key] = (dd[var] - dd[var].mean(dim=("x","y"))) / scale
+            # big arrays
+            varbig[key] = np.zeros((4*nx,ny,nz), dtype=np.float64)
+            for jx in range(4):
+                varbig[key][jx*nx:(jx+1)*nx,:,:] = dd[key][:,:,:].to_numpy()
+        #
+        # Calculate conditional averages
+        #
+        # define key for normalized condition variable
+        keycond = f"{cond_svar}_p"
+        # loop over y
+        for jy in range(ny):
+            # loop over x
+            for jx in range(nx):
+                # include points if meeting condition
+                is_hi = ((hilo == "hi") & (dd[keycond][jx,jy,cond_jz] > alpha))
+                is_lo = ((hilo == "lo") & (dd[keycond][jx,jy,cond_jz] < alpha))
+                if (is_hi | is_lo):
+                    # increment counter
+                    ncond += 1
+                    # loop over svarlist
+                    for svar in svarlist:
+                        kbig = f"{svar}_p"
+                        kcond = f"{svar}_cond_{cond_svar}_{hilo}"
+                        values = varbig[kbig][(jx+nx-n_min):(jx+nx+n_max),jy,:]
+                        condall[kcond][:,:] += values
+    # FINISHED TIME LOOP
+    print("Finished processing all timesteps")
+    # normalize each by number of samples
+    for key in condall.keys():
+        condall[key][:,:] /= ncond
+    # store these variables in Dataset for saving
+    # new array coordinates
+    xnew = np.linspace(-1*n_min*dx, n_max*dx, (n_min+n_max))
+    # empty dataset
+    dsave = xr.Dataset(data_vars=None, coords=dict(x=xnew, z=s.z), attrs=s.attrs)
+    # store each variable as DataArray
+    for key in condall.keys():
+        dsave[key] = xr.DataArray(data=condall[key], dims=("x","z"),
+                                    coords=dict(x=xnew, z=s.z))
+    # include attrs for each variable
+    # jz values
+    dsave.attrs["jz"] = cond_jz
+    # number of times meeting condition
+    dsave.attrs[f"n_{cond_svar}_{hilo}"] = ncond
+    # threshold value
+    dsave.attrs[f"alpha_{cond_svar}_{hilo}"] = alpha.values
+    # save and return
+    fsave = f"{dnc}cond_avg_{cond_svar}_{hilo}.nc"
+    # delete old file for saving new one
+    if os.path.exists(fsave):
+        os.system(f"rm {fsave}")
+        print(f"Saving file: {fsave}")
+    with ProgressBar():
+        dsave.to_netcdf(fsave, mode="w")
+
+    print(f"Finished processing conditional averaging on {cond_svar}_{hilo}")
+    return 
