@@ -174,7 +174,7 @@ def spectrogram(dnc, df, detrend="constant", use_q=True):
     # check if rotate attr exists
     if "rotate" in df.attrs.keys():
         if bool(df.rotate):
-            fsave = f"{dnc}spectrogram_rot2.nc"
+            fsave = f"{dnc}spectrogram_rot.nc"
         else:
             fsave = f"{dnc}spectrogram.nc"
     else:
@@ -189,25 +189,28 @@ def spectrogram(dnc, df, detrend="constant", use_q=True):
     print("Finished computing spectrograms!")
     return
 # --------------------------------
-def amp_mod(dnc, ts, s):
+def amp_mod(dnc, ts, delta):
     """Input timeseries xarray Dataset and stats file 
     with loaded LES data to calculate amplitude modulation 
     coefficients for all of: u, v, w, theta, q, uw, tw, qw, tq.
-    Automatically use cutoff wavelength of lambda_c = z_i,
     convert to temporal frequency with Taylor's hypothesis.
     Save netcdf file in dnc.
 
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset ts: timeseries xarray Dataset for calculating
-    :param Dataset s: mean statistics file for reference
+    :param float delta: cutoff wavelength to use for scale separation
     """
     print("Begin calculating amplitude modulation coefficients")
-    # lengthscale of filter to separate large and small scales
-    delta = s.h.values
     # cutoff frequency from Taylor
-    f_c = 1./(delta/ts.u_mean_rot)
+    f_c = ts.u_mean_rot / delta
     # names of variables to loop over: first half are detrended
-    var_ts = ["udr", "vdr", "wd", "td", "qd", "uw", "tw", "qw", "tq"]
+    var_ts = ["udr", "vdr", "wd", "td", "uw", "tw"]
+    # check if moisture variables exist; if so, add those to list
+    if "qd" in list(ts.keys()):
+        var_ts += ["qd", "qw", "tq"]
+        use_q = True
+    else:
+        use_q = False
     # initialize empty dictionary to hold FFT timseries
     f_all = {}
     print("Lowpass filter signals to separate large and small scale components")
@@ -274,7 +277,9 @@ def amp_mod(dnc, ts, s):
     # add delta as attr
     R.attrs["cutoff"] = delta
     # list of variable names for new save notation (can zip with var_ts to match)
-    vsave = ["u", "v", "w", "t", "q", "uw", "tw", "qw", "tq"]
+    vsave = ["u", "v", "w", "t", "uw", "tw"]
+    if use_q:
+        vsave += ["q", "qw", "tq"]
     # correlation between large scale u and filtered envelope of small-scale variable
     for vts, vv in zip(var_ts, vsave):
         key = f"ul_E{vv}"
@@ -288,10 +293,11 @@ def amp_mod(dnc, ts, s):
         key = f"tl_E{vv}"
         R[key] = xr.corr(ts_l["td"], E_filt[vts], dim="t")
     # correlation between large scale q and filtered envelope of small-scale variable
-    for vts, vv in zip(var_ts, vsave):
-        key = f"ql_E{vv}"
-        R[key] = xr.corr(ts_l["qd"], E_filt[vts], dim="t")
-
+    if use_q:
+        for vts, vv in zip(var_ts, vsave):
+            key = f"ql_E{vv}"
+            R[key] = xr.corr(ts_l["qd"], E_filt[vts], dim="t")
+        R.attrs["use_q"] = "True"
     # save file
     fsavenc = f"{dnc}AM_coefficients.nc"
     # delete old file for saving new one
