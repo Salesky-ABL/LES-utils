@@ -484,9 +484,9 @@ def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg):
     dd_save["tw_cov_tot"] = dd_save.tw_cov_res + dd_save.tw_cov_sgs
     if use_q:
         dd_save["qw_cov_tot"] = dd_save.qw_cov_res + dd_save.qw_cov_sgs
-    # tvw_cov_tot from tw_cov_tot and qw_cov_tot
-    dd_save["tvw_cov_tot"] = dd_save.tw_cov_tot +\
-            0.61 * dd_save.thetav_mean[0] * dd_save.qw_cov_tot/1000.
+        # tvw_cov_tot from tw_cov_tot and qw_cov_tot
+        dd_save["tvw_cov_tot"] = dd_save.tw_cov_tot +\
+                0.61 * dd_save.thetav_mean[0] * dd_save.qw_cov_tot/1000.
     # --------------------------------
     # Add attributes
     # --------------------------------
