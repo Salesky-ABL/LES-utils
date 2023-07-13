@@ -36,6 +36,9 @@ def autocorr_1d(dnc, df, detrend="constant"):
 
     # variables to loop over for calculations
     vall = ["u", "v", "w", "theta", "u_rot", "v_rot"]
+    # check to see if q in list of keys
+    if "q" in list(df.keys()):
+        vall.append("q")
 
     # loop over variables
     for v in vall:
@@ -559,4 +562,81 @@ def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
         dsave.to_netcdf(fsave, mode="w")
 
     print(f"Finished processing conditional averaging on {cond_svar}_{hilo}")
-    return 
+    return
+# --------------------------------
+def calc_quadrant(dnc, df, var_pairs=[("u_rot","w"), ("theta","w")], 
+                  svarlist=["uw", "tw"]):
+    """Purpose: Calculate quadrant components of given pairs of variables and
+    also calculate their mixing efficiences, eta
+    :param str dnc: directory for saving files
+    :param Dataset df: 4D xarray Dataset for analysis
+    :param list<str> var_pairs: list of variable pairs to calculate covars
+    :param list<str> svarlist: list of variable save names corresponding to varlist
+    saves netcdf file in dnc
+    """
+    # get instantaneous perturbations for each unique variable in var_pairs
+    # create list of unique variables from pairs
+    punique = []
+    for p in var_pairs:
+        for pp in p:
+            if pp not in punique:
+                punique.append(pp)
+    # just store in dictionary
+    varp = {}
+    for var in punique:
+        varp[var] = df[var] - df[var].mean(dim=("x","y"))
+    # calculate four quadrants
+    # initialize empty dataset for storing
+    quad = xr.Dataset(data_vars=None,
+                      coords=dict(z=df.z),
+                      attrs=df.attrs)
+    # loop over variable pairs
+    for pair, vlab in zip(var_pairs, svarlist):
+        print(f"Calculating quadrant components for: {vlab}")
+        dat1 = varp[pair[0]]
+        dat2 = varp[pair[1]]
+        # dat1 > 0, dat2 > 0
+        d_pp = dat1.where(dat1 > 0.) * dat2.where(dat2 > 0.)
+        # dat1 > 0, dat2 < 0
+        d_pn = dat1.where(dat1 > 0.) * dat2.where(dat2 < 0.)
+        # dat1 < 0, dat2 > 0
+        d_np = dat1.where(dat1 < 0.) * dat2.where(dat2 > 0.)
+        # dat1 < 0, dat2 < 0
+        d_nn = dat1.where(dat1 < 0.) * dat2.where(dat2 < 0.)
+        # calculate means and store
+        quad[f"{vlab}_pp"] = d_pp.mean(dim=("time","x","y"), skipna=True)
+        quad[f"{vlab}_pn"] = d_pn.mean(dim=("time","x","y"), skipna=True)
+        quad[f"{vlab}_np"] = d_np.mean(dim=("time","x","y"), skipna=True)
+        quad[f"{vlab}_nn"] = d_nn.mean(dim=("time","x","y"), skipna=True)
+    print("Finished calculating quadrant components")
+    # begin calculating mixing efficiencies eta
+    for pair, vlab in zip(var_pairs, svarlist):
+        print(f"Calculating mixing efficiency for: {vlab}")
+        # calculate full covariance between variable pair
+        # use detrended variables stored in varp
+        cov_res = xr.cov(varp[pair[0]], varp[pair[1]], dim=("time","x","y"))
+        # NOTE: in SBL, all variables increase with height so will use
+        # quadrants II and IV in denom; will need to change in future!
+        # example: eta_uw = |<u'w'>| / |(<u-w+> + <u+w->)|
+        quad[f"eta_{vlab}"] = np.abs(cov_res) / np.abs(quad[f"{vlab}_np"] +\
+                                                       quad[f"{vlab}_pn"])
+    print("Finished calculating mixing efficiencies")
+    # finally, calculate sum of quadrants
+    for pair, vlab in zip(var_pairs, svarlist):
+        print(f"Calculating quadrant sum for: {vlab}")
+        quad[f"{vlab}_sum"] = np.abs(quad[f"{vlab}_pp"]) +\
+                              np.abs(quad[f"{vlab}_pn"]) +\
+                              np.abs(quad[f"{vlab}_np"]) +\
+                              np.abs(quad[f"{vlab}_nn"])
+    print("Finished calculating quadrant sums")
+    # save quad Dataset as netcdf
+    vlabs = "_".join(svarlist)
+    fsave = f"{dnc}{vlabs}_quadrant.nc"
+    # delete old file for saving new one
+    if os.path.exists(fsave):
+        os.system(f"rm {fsave}")
+    print(f"Saving file: {fsave}")
+    with ProgressBar():
+        quad.to_netcdf(fsave, mode="w")
+    
+    return
