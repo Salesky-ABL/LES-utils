@@ -640,3 +640,42 @@ def calc_quadrant(dnc, df, var_pairs=[("u_rot","w"), ("theta","w")],
         quad.to_netcdf(fsave, mode="w")
     
     return
+# --------------------------------
+def calc_lengthscale(dnc, R):
+    """Input xarray Dataset with loaded autocorrelation data to
+    calculate integral lengthscales up to first zero crossing for
+    each parameter saved at every height.
+    Save netcdf file in dnc.
+
+    :param str dnc: absolute path to netcdf directory for saving new file
+    :param Dataset R: 1d autocorrelation dataset computed from autocorr_1d
+    """
+    # grab only positive lags
+    R = R.where(R.x >= 0., drop=True)
+    # create empty dataset for storing/saving
+    Lsave = xr.Dataset()
+    # loop over variables
+    for var in list(R.keys()):
+        # empty array to fill in height
+        LL = np.zeros(R.z.size, dtype=np.float64)
+        # loop over heights
+        for jz in range(R.z.size):
+            # find first zero crossing
+            izero = np.where(R[var].isel(z=jz) <= 0.)[0]
+            # make sure izero isn't empty
+            if np.size(izero) > 0:
+                izero = izero[0]
+            else:
+                izero = 0
+            # now integrate and store in array
+            LL[jz] = R[var].isel(z=jz, x=range(izero)).integrate("x")
+        # store LL in Lsave
+        Lsave[var] = xr.DataArray(data=LL, coords=dict(z=R.z))
+    # save file and return
+
+    fsave = f"{dnc}lengthscale.nc"
+    print(f"Saving file: {fsave}")
+    with ProgressBar():
+        Lsave.to_netcdf(fsave, mode="w")
+
+    return
