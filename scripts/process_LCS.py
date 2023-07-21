@@ -13,8 +13,9 @@ from LESutils import load_full
 from spec import nc_LCS
 
 # list of simulations to consider
-slist = ["cr0.10_u08_192", "cr0.25_u08_192", "cr0.33_u08_192",
-         "cr0.50_u08_192", "cr1.00_u08_192"]
+# slist = ["cr0.10_u08_192", "cr0.25_u08_192", "cr0.33_u08_192",
+        #  "cr0.50_u08_192", "cr1.00_u08_192"]
+slist = ["cr0.50_u08_240"]
 dsim = "/home/bgreene/simulations/"
 dncall = [f"{dsim}{stab}/output/netcdf/" for stab in slist]
 # simulation timesteps to consider
