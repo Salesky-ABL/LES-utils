@@ -18,6 +18,28 @@ from dask.diagnostics import ProgressBar
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
+def acf1d(din, detrend="constant"):
+    """Input 4D xarray DataArray and calculate acf in x-dim, average in y, time
+    Return DataArray(xlag, z)
+
+    :param DataArray din: data to compute acf
+    :param str detrend: how to detrend along x-axis before processing,\
+        default="constant" (also accepts "linear")
+    """
+    # detrend
+    # subtract mean by default, or linear if desired
+    dfluc = xrft.detrend(din, dim="x", detrend_type=detrend)
+    # normalize by standard deviation
+    dnorm = dfluc / dfluc.std(dim="x")
+    # calculate PSD using xrft
+    PSD = xrft.power_spectrum(dnorm, dim="x", true_phase=True, 
+                              true_amplitude=True)
+    # take real part of ifft to return ACF
+    R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, 
+                  lag=0).real
+    # average in y and time and return
+    return R.mean(dim=("y","time"))
+
 def autocorr_1d(dnc, df, detrend="constant"):
     """Input 4D xarray Dataset with loaded LES data to calculate
     autocorrelation function along x-direction, then average in
@@ -42,23 +64,8 @@ def autocorr_1d(dnc, df, detrend="constant"):
 
     # loop over variables
     for v in vall:
-        # grab data
-        din = df[v]
-        # detrend
-        # subtract mean by default, or linear if desired
-        dfluc = xrft.detrend(din, dim="x", detrend_type=detrend)
-        # normalize by standard deviation
-        dnorm = dfluc / dfluc.std(dim="x")
-        # calculate PSD using xrft
-        PSD = xrft.power_spectrum(dnorm, dim="x", true_phase=True, 
-                                  true_amplitude=True)
-        # take real part of ifft to return ACF
-        R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, 
-                      lag=0).real
-        # average in y and time
-        R_ytavg = R.mean(dim=("y","time"))
-        # store in Rsave
-        Rsave[v] = R_ytavg
+        # call acf1d, store in Rsave
+        Rsave[v] = acf1d(df[v], detrend=detrend)
     
     # save nc file
     fsave = f"{dnc}R_1d.nc"
@@ -135,8 +142,8 @@ def spectrogram(dnc, df, detrend="constant", use_q=True):
     vall = ["u_rot", "w", "theta"]
     vsave = ["uu", "ww", "tt"]
     if use_q:
-        vall.append("q")
-        vsave.append("qq")
+        vall += ["q", "thetav"]
+        vsave += ["qq", "tvtv"]
 
     # loop over variables
     for v, vs in zip(vall, vsave):
@@ -666,7 +673,7 @@ def calc_lengthscale(dnc, R):
             if np.size(izero) > 0:
                 izero = izero[0]
             else:
-                izero = 0
+                izero = 1
             # now integrate and store in array
             LL[jz] = R[var].isel(z=jz, x=range(izero)).integrate("x")
         # store LL in Lsave
