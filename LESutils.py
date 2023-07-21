@@ -259,7 +259,7 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
         base.append("dissip")
     if use_q:
         base.append("q")
-        base1.append("q")
+        base1 += ["q", "thetav"]
     # calculate means
     for s in base:
         dd_stat[f"{s}_mean"] = dd[s].mean(dim=("time", "x", "y"))
@@ -278,8 +278,8 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
         dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
         dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
         # calculate thetav
-        tv = dd.theta * (1. + 0.61*dd.q/1000.)
-        dd_stat["thetav_mean"] = tv.mean(dim=("time","x","y"))
+        dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
+        dd_stat["thetav_mean"] = dd.thetav.mean(dim=("time","x","y"))
         # tvw_cov_tot from tw_cov_tot and qw_cov_tot
         dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
             0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
@@ -668,6 +668,10 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None, rotate=False):
     dd = xr.open_mfdataset(fall, combine="nested", concat_dim="time")
     dd.coords["time"] = times
     dd.time.attrs["units"] = "s"
+    # calculate theta_v if q in varlist
+    if "q" in list(dd.keys()):
+        dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
+    # stats file
     if stats is not None:
         # load stats file
         s = load_stats(dnc+stats, SBL=SBL)
