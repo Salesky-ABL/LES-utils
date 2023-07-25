@@ -18,13 +18,14 @@ from dask.diagnostics import ProgressBar
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
-def acf1d(din, detrend="constant"):
+def acf1d(din, detrend="constant", poslags=False):
     """Input 4D xarray DataArray and calculate acf in x-dim, average in y, time
     Return DataArray(xlag, z)
 
     :param DataArray din: data to compute acf
     :param str detrend: how to detrend along x-axis before processing,\
         default="constant" (also accepts "linear")
+    :param bool poslags: return only positive lags, default=False
     """
     # detrend
     # subtract mean by default, or linear if desired
@@ -37,8 +38,13 @@ def acf1d(din, detrend="constant"):
     # take real part of ifft to return ACF
     R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, 
                   lag=0).real
-    # average in y and time and return
-    return R.mean(dim=("y","time"))
+    # average in y and time
+    Ryt = R.mean(dim=("y","time"))
+    # check poslags
+    if poslags:
+        return Ryt.where(Ryt.x >= 0., drop=True)
+    else:
+        return Ryt
 
 def autocorr_1d(dnc, df, detrend="constant"):
     """Input 4D xarray Dataset with loaded LES data to calculate
