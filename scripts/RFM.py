@@ -144,7 +144,7 @@ def calc_4_order(dnc, df, use_q=True):
             "uwuw", "vwvw", "twtw",
             "uuuu", "uuuur", "vvvv", "vvvvr", "wwww", "tttt"]
     if use_q:
-        vacf += ["q", "qw", "qwqw", "qqqq"]
+        vacf += ["q", "qw", "qq", "qwqw", "qqqq"]
     # begin loop
     for v in vacf:
         # use acf1d and compute
@@ -240,9 +240,6 @@ def calc_RFM_var(dnc, df, use_q, filt, delta_x):
     df["vw"] = calc_inst_var(df.v, df.w, df.tyz)
     # t'w'
     df["tw"] = calc_inst_var(df.theta, df.w, df.q3)
-    if use_q:
-        df["qw"] = calc_inst_var(df.q, df.w, df.wq_sgs)
-    # only going to care about rotated variances in u, v
     # u'u'
     df["uu"] = calc_inst_var(df.u, df.u)
     # u'u' rot
@@ -257,6 +254,7 @@ def calc_RFM_var(dnc, df, use_q, filt, delta_x):
     df["tt"] = calc_inst_var(df.theta, df.theta)
     if use_q:
         df["qq"] = calc_inst_var(df.q, df.q)
+        df["qw"] = calc_inst_var(df.q, df.w, df.wq_sgs)
     # initialize empty Dataset for autocorrs
     RFMvar = xr.Dataset(data_vars=None, attrs=df.attrs)
     # define list of parameters for looping
@@ -264,7 +262,7 @@ def calc_RFM_var(dnc, df, use_q, filt, delta_x):
              "uw", "vw", "tw",
              "uu", "uur", "vv", "vvr", "ww", "tt"]
     if use_q:
-        vfilt += ["q", "qw"]
+        vfilt += ["q", "qw", "qq"]
     # begin loop
     for v in vfilt:
         # use relaxed_filter and compute
@@ -280,17 +278,118 @@ def calc_RFM_var(dnc, df, use_q, filt, delta_x):
 
     return
 # --------------------------------
+def power_law(delta_x, C, p):
+    # function to be used with curve_fit
+    return C * (delta_x ** (-p))
+# --------------------------------
+def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
+    """Determine the coefficients C and p in the RFM power law
+    based on the 2nd/4th-order variances and the RFM variances.
+    Save netcdf files for C and p individually.
+    :param str dnc: directory for saving netcdf file
+    :param Dataset RFM_var: output from the RFM_var routine
+    :param Dataset var4: 4th order variances from calc_4_order
+    :param Dataset s: mean statistics (mainly for 2nd order var/cov)
+    :param list dx_fit_1: pair of values for min and max filter widths\
+        to fit power law on 1st order moments
+    :param list dx_fit_2: same as dx_fit_1 but for second order moments
+    """
+    # NOTE: only computing within the ABL! Grab indices here
+    nzabl = s.nzabl
+    zabl = s.z.isel(z=range(nzabl))
+    # create empty datasets C and p
+    C = xr.Dataset(data_vars=None, coords=dict(z=zabl), attrs=RFM_var.attrs)
+    p = xr.Dataset(data_vars=None, coords=dict(z=zabl), attrs=RFM_var.attrs)
+    # define lists of desired parameters and their corresponding variances
+    # 1st order - vars from stat file
+    vRFM1 = ["u", "u_rot", "v", "v_rot", "theta"]
+    vvar1 = ["u_var, u_var_rot", "v_var", "v_var_rot", "theta_var"]
+    # 2nd order - vars from var4 file
+    vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt"]
+    vvar2 = ["uwuw_var", "vwvw_var", "twtw_var", "uuuu_var", "uuuur_var",
+             "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var"]
+    # check for q in RFM_var and add to all lists above
+    if "q_mean" in list(s.keys()):
+        # 1
+        vRFM1.append("q")
+        vvar1.append("q_var")
+        # 2
+        vRFM2 += ["qw", "qq"]
+        vvar2 += ["qwqw_var", "qqqq_var"]
+    # grab delta_x ranges based on dx_fit_1 and dx_fit_2
+    ix1 = np.where((RFM_var.delta_x >= dx_fit_1[0]) &\
+                   (RFM_var.delta_x <= dx_fit_1[1]))[0]
+    ix2 = np.where((RFM_var.delta_x >= dx_fit_2[0]) &\
+                   (RFM_var.delta_x <= dx_fit_2[1]))[0]
+    # loop through first order moments
+    for v, var in zip(vRFM1, vvar1):
+        print(f"Calculating power law coefficients for: {v}")
+        # construct empty DataArrays for v to store in C and p
+        C[v] = xr.DataArray(np.zeros(nzabl, dtype=np.float64),
+                            coords=dict(z=zabl))
+        p[v] = xr.DataArray(np.zeros(nzabl, dtype=np.float64),
+                            coords=dict(z=zabl))
+        # loop over heights within abl
+        for jz in range(nzabl):
+            # grab ranges of data for fitting
+            # x: delta_x
+            xfit = RFM_var.delta_x.isel(delta_x=ix1)
+            # y: filtered variance / ensemble variance
+            yfit = RFM_var[v].isel(z=jz, delta_x=ix1) / s[var].isel(z=jz)
+            # fit x and y to power law
+            (C[v][jz], p[v][jz]), _ = curve_fit(f=power_law,
+                                                xdata=xfit,
+                                                ydata=yfit,
+                                                p0=[0.001, 0.001])
+    # repeat for second order moments
+    for v, var in zip(vRFM2, vvar2):
+        print(f"Calculating power law coefficients for: {v}")
+        # construct empty DataArrays for v to store in C and p
+        C[v] = xr.DataArray(np.zeros(nzabl, dtype=np.float64),
+                            coords=dict(z=zabl))
+        p[v] = xr.DataArray(np.zeros(nzabl, dtype=np.float64),
+                            coords=dict(z=zabl))
+        # loop over heights within abl
+        for jz in range(nzabl):
+            # grab ranges of data for fitting
+            # x: delta_x
+            xfit = RFM_var.delta_x.isel(delta_x=ix2)
+            # y: filtered variance / ensemble variance
+            yfit = RFM_var[v].isel(z=jz, delta_x=ix2) / var4[var].isel(z=jz)
+            # fit x and y to power law
+            (C[v][jz], p[v][jz]), _ = curve_fit(f=power_law,
+                                                xdata=xfit,
+                                                ydata=yfit,
+                                                p0=[0.001, 0.001])
+    #
+    # Save C and p as netcdf files
+    #
+    # C
+    fsaveC = f"{dnc}fit_C.nc"
+    if os.path.exists(fsaveC):
+        os.system(f"rm {fsaveC}")
+    print(f"Saving file: {fsaveC}")
+    with ProgressBar():
+        C.to_netcdf(fsaveC, mode="w") 
+    # p
+    fsavep = f"{dnc}fit_p.nc"
+    if os.path.exists(fsavep):
+        os.system(f"rm {fsavep}")
+    print(f"Saving file: {fsavep}")
+    with ProgressBar():
+        p.to_netcdf(fsavep, mode="w")       
+    
+# --------------------------------
 # main loop
 if __name__ == "__main__":
     dnc = "/home/bgreene/simulations/u15_tw10_qw04_dry3/output/netcdf/"
     dd, s = load_full(dnc, 360000, 432000, 1000, 0.05, False, 
-                      "mean_stats_xyt_5-6h.nc", True)
+                      "mean_stats_xyt_5-6h_rot.nc", True)
     
-    # calculate and/or load 4th order variances
-    fvar4 = dnc+"variances_4_order.nc"
-    if not os.path.exists(fvar4):
-        calc_4_order(dnc, dd, True)
-    var4 = xr.load_dataset(fvar4)
+    # calculate and load 4th order variances
+    calc_4_order(dnc, dd, True)
+    # load again
+    var4 = xr.load_dataset(dnc+"variances_4_order.nc")
     R = xr.load_dataset(dnc+"autocorr.nc")
 
     # filtering routines
@@ -302,3 +401,11 @@ if __name__ == "__main__":
     filt = construct_filter(delta_x, dd.nx, dd.Lx)
     # call RFM
     calc_RFM_var(dnc, dd, True, filt, delta_x)
+    # load back this data
+    RFM_var = xr.load_dataset(dnc+"RFM.nc")
+
+    # next step: calculate/fit RFM coefficients to normalized variances
+    # feed function var4 and RFM_var, stats file
+    dx_fit_1 = [2000, 5000] # use RFM_test.ipynb to explore this
+    dx_fit_2 = [2000, 5000] # appears to be valid for both 1 and 2
+    fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2)
