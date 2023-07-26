@@ -20,7 +20,7 @@ from scipy.fft import fft, ifft, fft2, ifft2, fftfreq, fftshift
 from scipy.optimize import curve_fit
 from dask.diagnostics import ProgressBar
 from LESutils import load_full
-from spec import acf1d
+from spec import acf1d, calc_lengthscale
 # --------------------------------
 def calc_inst_var(d1, d2, SGS=None):
     """Calculate 'instantaneous' variance/covariance between 2 parameters
@@ -377,8 +377,134 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
         os.system(f"rm {fsavep}")
     print(f"Saving file: {fsavep}")
     with ProgressBar():
-        p.to_netcdf(fsavep, mode="w")       
+        p.to_netcdf(fsavep, mode="w")
     
+    return
+# --------------------------------
+def calc_error(dnc, T1, T2, var4, s, C, p, L):
+    """Calculate the relative random errors given the RFM coefficients
+    C and p for the desired averaging times T1, T2 for 1st and 2nd order.
+    For comparison, also calculate Lumley-Panofsky formulation.
+    Save netcdf file in dnc.
+    :param str dnc: directory for saving netcdf file
+    :param float T1: averaging time of 1st order moments
+    :param float T2: averaging time of 2nd order moments
+    :param Dataset var4: 4th order variances from calc_4_order
+    :param Dataset s: mean statistics (mainly for 2nd order var/cov)
+    :param Dataset C: coefficients from fit_RFM
+    :param Dataset p: coefficients from fit_RFM
+    :param Dataset L: integral lengthscales to calc LP errors
+    """
+    # grab abl indices
+    nzabl = s.nzabl
+    zabl = s.z.isel(z=range(nzabl))
+    # use Taylor hypothesis to convert time to space
+    X1 = s.uh.isel(z=range(nzabl)) * T1
+    X2 = s.uh.isel(z=range(nzabl)) * T2
+    # create xarray Datasets for MSE and err
+    MSE = xr.Dataset(data_vars=None, coords=dict(z=C.z), attrs=C.attrs)
+    err = xr.Dataset(data_vars=None, coords=dict(z=C.z), attrs=C.attrs)
+    # define lists of desired parameters and their corresponding variances
+    # 1st order - vars from stat file
+    vRFM1 = ["u", "u_rot", "v", "v_rot", "theta"]
+    vvar1 = ["u_var, u_var_rot", "v_var", "v_var_rot", "theta_var"]
+    vavg1 = ["u_mean", "u_mean_rot", "v_mean", "v_mean_rot", "theta_mean"]
+    # 2nd order - vars from var4 file
+    vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt"]
+    vvar2 = ["uwuw_var", "vwvw_var", "twtw_var", "uuuu_var", "uuuur_var",
+             "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var"]
+    vavg2 = ["uw_cov_tot", "vw_cov_tot", "tw_cov_tot", "u_var", "u_var_rot",
+             "v_var", "v_var_rot", "w_var", "theta_var"]   
+    # check for q in RFM_var and add to all lists above
+    if "q_mean" in list(s.keys()):
+        # 1
+        vRFM1.append("q")
+        vvar1.append("q_var")
+        vavg1.append("q_mean")
+        # 2
+        vRFM2 += ["qw", "qq"]
+        vvar2 += ["qwqw_var", "qqqq_var"]
+        vavg2 += ["qw_cov_tot", "q_var"]
+    # Begin calculating errors
+    # Start with 1st order
+    for v, var, avg in zip(vRFM1, vvar1, vavg1):
+        print(f"Computing errors for: {v}")
+        # use values of C and p to extrapolate calculation of MSE/var{x}
+        # renormalize with variances in vvar1
+        MSE[v] = s[var].isel(z=range(nzabl)) * (C[v] * (X1**-p[v]))
+        # take sqrt to get RMSE
+        RMSE = np.sqrt(MSE[v])
+        # divide by <x> to get epsilon (relative random error)
+        err[v] = RMSE / abs(s[avg].isel(z=range(nzabl)))
+    # 2nd order
+    for v, var, avg in zip(vRFM2, vvar2, vavg2):
+        print(f"Computing errors for: {v}")
+        # use values of C and p to extrapolate calculation of MSE/var{x}
+        # renormalize with variances in vvar1
+        MSE[v] = var4[var].isel(z=range(nzabl)) * (C[v] * (X2**-p[v]))
+        # take sqrt to get RMSE
+        RMSE = np.sqrt(MSE[v])
+        # divide by <x> to get epsilon (relative random error)
+        err[v] = RMSE / abs(s[avg].isel(z=range(nzabl)))
+    # calculate errors in wind speed and direction using error propagation
+    # grab individual RMSEs
+    sig_u = np.sqrt(MSE["u"])
+    sig_v = np.sqrt(MSE["v"])
+    # calculate wspd error and store
+    err["wspd"] = np.sqrt( (sig_u**2. * s.u_mean.isel(z=range(nzabl))**2. +\
+                            sig_v**2. * s.v_mean.isel(z=range(nzabl))**2.)/\
+                           (s.u_mean.isel(z=range(nzabl))**2. +\
+                            s.v_mean.isel(z=range(nzabl))**2.) ) /\
+                  s.uh.isel(z=range(nzabl))
+    # calculate wdir error and store
+    # first get wdir in radians
+    wdir = s.wdir * np.pi/180.
+    err["wdir"] = np.sqrt( (sig_u**2. * s.u_mean.isel(z=range(nzabl))**2. +\
+                            sig_v**2. * s.v_mean.isel(z=range(nzabl))**2.)/\
+                           ((s.u_mean.isel(z=range(nzabl))**2. +\
+                            s.v_mean.isel(z=range(nzabl))**2.)**2.) ) /\
+                  wdir.isel(z=range(nzabl))
+    # calculate errors in ustar^2 for coordinate-agnostic horiz Reynolds stress
+    # ustar2 = (<u'w'>^2 + <v'w'>^2) ^ 1/2
+    sig_uw = np.sqrt(MSE["uw_cov_tot"])
+    sig_vw = np.sqrt(MSE["vw_cov_tot"])
+    err["ustar2"] = np.sqrt( (sig_uw**2. * s.uw_cov_tot.isel(z=range(nzabl))**2. +\
+                              sig_vw**2. * s.vw_cov_tot.isel(z=range(nzabl))**2.)/\
+                              (s.ustar2.isel(z=range(nzabl))**2.)) / \
+                    s.ustar2.isel(z=range(nzabl))
+    #
+    # Save as netcdf file
+    #
+    fsave_err = f"{dnc}err.nc"
+    if os.path.exists(fsave_err):
+        os.system(f"rm {fsave_err}")
+    print(f"Saving file: {fsave_err}")
+    with ProgressBar():
+        err.to_netcdf(fsave_err, mode="w")     
+
+    # calculate error from Lumley and Panofsky for given sample times
+    # err_LP = sqrt[(2*int_lengh*ens_variance)/(ens_mean^2*sample_length)]
+    print("Calculate LP relative random errors...")
+    # empty Dataset
+    err_LP = xr.Dataset(data_vars=None, coords=dict(z=C.z), attrs=C.attrs)
+    # loop through first-order moments
+    for v, var, avg in zip(vRFM1, vvar1, vavg1):
+        err_LP[v] = np.sqrt((2. * L[v] * s[var].isel(z=range(nzabl)))/\
+                            (X1 * s[avg].isel(z=range(nzabl))**2.))
+    # loop through second-order moments
+    for v, var, avg in zip(vRFM2, vvar2, vavg2):
+        err_LP[v] = np.sqrt((2. * L[v] * var4[var].isel(z=range(nzabl)))/\
+                            (X1 * s[avg].isel(z=range(nzabl))**2.))
+    # save err_LP as netcdf
+    fsave_LP = f"{dnc}err_LP.nc"
+    if os.path.exists(fsave_LP):
+        os.system(f"rm {fsave_LP}")
+    print(f"Saving file: {fsave_LP}")
+    with ProgressBar():
+        err_LP.to_netcdf(fsave_LP, mode="w")
+    
+    return
+
 # --------------------------------
 # main loop
 if __name__ == "__main__":
@@ -409,3 +535,16 @@ if __name__ == "__main__":
     dx_fit_1 = [2000, 5000] # use RFM_test.ipynb to explore this
     dx_fit_2 = [2000, 5000] # appears to be valid for both 1 and 2
     fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2)
+    # load C, p
+    C = xr.load_dataset(dnc+"fit_C.nc")
+    p = xr.load_dataset(dnc+"fit_p.nc")
+
+    # compute integral lengthscales using calc_lengthscale
+    calc_lengthscale(dnc, R)
+    # load
+    L = xr.load_dataset(dnc+"lengthscale.nc")
+
+    # calculate errors
+    T1 = 5.    # seconds
+    T2 = 1800. # seconds, = 30 min
+    calc_error(dnc, T1, T2, var4, s, C, p, L)
