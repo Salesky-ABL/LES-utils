@@ -9,6 +9,9 @@
 import sys
 sys.path.append("..")
 import yaml
+import os
+from time import sleep
+from datetime import datetime
 from LESutils import sim2netcdf, calc_stats, calc_stats_long,\
     timeseries2netcdf, load_full, load_stats, load_timeseries,\
     nc_rotate
@@ -18,6 +21,17 @@ from spec import autocorr_1d, autocorr_2d, spectrogram, amp_mod
 fyaml = "/home/bgreene/LES-utils/scripts/process.yaml"
 with open(fyaml) as f:
     config = yaml.safe_load(f)
+
+# while loop to check if sim complete
+ffinal = f"{config['dout']}u_{config['t1']:07d}.out"
+ncfinal = f"{config['dnc']}all_{config['t1']:07d}.nc"
+if os.path.exists(ncfinal):
+    print("Simulation nc files exist...continue.")
+else:
+    while not os.path.exists(ffinal):
+        print(datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+        print("Simulation not complete. Waiting another hour.")
+        sleep(3600)
 
 # run functions based on config params
 # sim2netcdf
@@ -34,7 +48,7 @@ if config["calcstats"]:
     print("Begin calc_stats...")
     calc_stats(config["dnc"], config["t0"], config["t1"], config["dt"], 
                config["delta_t"], config["use_dissip"], config["use_q"], 
-               config["detrend"], config["tavg"])
+               config["detrend"], config["tavg"], config["use_rot"])
     print("Finished calc_stats!")
 
 # calc_stats_long
@@ -42,7 +56,7 @@ if config["statslong"]:
     print("Begin calc_stats_long...")
     calc_stats_long(config["dnc"], config["t0"], config["t1"], config["dt"],
                     config["delta_t"], config["use_dissip"], config["use_q"],
-                    config["tavg"])
+                    config["tavg"], config["use_rot"])
     print("Finished calc_stats!")
     
 # timeseries2netcdf
@@ -90,7 +104,7 @@ if config["AM"]:
     ts = load_timeseries(config["dnc"], detrend=True, 
                          tavg=f"{config['nhr']}h")
     print("Begin amp_mod...")
-    amp_mod(config["dnc"], ts, s)
+    amp_mod(config["dnc"], ts, 0.25*s.h.values)
     print("Finished amp_mod!")
 
 print("process.py complete!")
