@@ -216,7 +216,8 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     print("Finished saving all files!")
     return
 # ---------------------------------------------
-def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg):
+def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
+               rotate):
     """Read multiple output netcdf files created by sim2netcdf() to calculate
     averages in x, y, t and save as new netcdf file
 
@@ -230,11 +231,15 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
     :param bool detrend_stats: flag for detrending fields in time when\
         calculating statistics
     :param str tavg: label denoting length of temporal averaging (e.g. 1h)
+    :param bool rotate: flag for using rotated volume files
     """
     # directories and configuration
     timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
-    # determine files to read from timesteps
-    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+     # determine files to read from timesteps
+    if rotate:
+        fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    else:
+        fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
     nf = len(fall)
     # calculate array of times represented by each file
     times = np.array([i*delta_t*dt for i in range(nf)])
@@ -328,14 +333,17 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg)
     # --------------------------------
     # Save output file
     # --------------------------------
-    fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
+    if rotate:
+        fsave = f"{dnc}mean_stats_xyt_{tavg}_rot.nc"
+    else:
+        fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         dd_stat.to_netcdf(fsave, mode="w")
     print("Finished!")
     return
 # ---------------------------------------------
-def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg):
+def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg, rotate):
     """Read multiple output netcdf files created by sim2netcdf() to calculate
     averages in x, y, t and save as new netcdf file. Identical in scope as
     calc_stats(), but sacrifices xarray syntax simplicity for the sake of
@@ -349,11 +357,15 @@ def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg):
     :param bool use_dissip: flag for loading dissipation rate files (SBL only)
     :param bool use_q: flag for loading specific humidity files (les_brg only)
     :param str tavg: label denoting length of temporal averaging (e.g. 1h)
+    :param bool rotate: flag for using rotated fields
     """
     # directories and configuration
     timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
-    # determine files to read from timesteps
-    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+     # determine files to read from timesteps
+    if rotate:
+        fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    else:
+        fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
     nf = len(fall)
     # calculate array of times represented by each file
     times = np.array([i*delta_t*dt for i in range(nf)])
@@ -498,7 +510,10 @@ def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg):
     # --------------------------------
     # Save output file
     # --------------------------------
-    fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
+    if rotate:
+        fsave = f"{dnc}mean_stats_xyt_{tavg}_rot.nc"
+    else:
+        fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         dd_save.to_netcdf(fsave, mode="w")
@@ -1057,16 +1072,21 @@ def coord_rotate_3D(nx, ny, nz, Lx, Ly, x, y, ca, sa, dat):
     :param ndarray sa: sine of mean wind direction
     :param ndarray dat: 3-dimensional field to be rotated
     return dat_r: rotated field
-    """    
-    # create big 3d array of repeating dat variable 
+    """
+    # create big 3d array of repeating dat variable
     # to use as reference points when interpolating
-    datbig = np.zeros((4*nx, 4*ny, nz), dtype=np.float64)
+    # interpolate spectrally first though
+    nf = 2
+    nx2, ny2 = nf*nx, nf*ny
+    dat_spec = interpolate_spec_2d(dat, Lx, Ly, nf).to_numpy()
+    # initialize empty array and fill with dat_spec
+    datbig = np.zeros((4*nx2, 4*ny2, nz), dtype=np.float64)
     for jx in range(4):
         for jy in range(4):
-            datbig[jx*nx:(jx+1)*nx,jy*ny:(jy+1)*ny,:] = dat
+            datbig[jx*nx2:(jx+1)*nx2,jy*ny2:(jy+1)*ny2,:] = dat_spec
     # create lab frame coordinates to match big variable array
-    xbig = np.linspace(-2*Lx, 2*Lx, 4*nx)
-    ybig = np.linspace(-2*Ly, 2*Ly, 4*ny)
+    xbig = np.linspace(-2*Lx, 2*Lx, 4*nx2)
+    ybig = np.linspace(-2*Ly, 2*Ly, 4*ny2)
     # create empty array to store interpolated values
     datinterp = np.zeros((nx, ny, nz), dtype=np.float64)
     # create meshgrid of lab coordinates
@@ -1081,7 +1101,7 @@ def coord_rotate_3D(nx, ny, nz, Lx, Ly, x, y, ca, sa, dat):
         # create array of new coords to use
         points = np.array([xxp.ravel(), yyp.ravel()]).T
         # interpolate and store in variable array
-        datinterp[:,:,jz] = interp(points, method="linear").reshape(nx, ny)
+        datinterp[:,:,jz] = interp(points, method="nearest").reshape(nx, ny).T
 
     return datinterp
 # ---------------------------------------------
@@ -1142,7 +1162,7 @@ def xr_rotate(df):
     # loop over variables
     for var in vhave:
         # convert 3d dataarray to numpy
-        dat = df[var].to_numpy()
+        dat = df[var]
         # rotate and interpolate
         vrot = coord_rotate_3D(nx, ny, nz, Lx, Ly, x, y, ca, sa, dat)
         # add vrot to df_jt as DataArray
@@ -1188,3 +1208,31 @@ def nc_rotate(dnc, t0, t1, dt):
     
     print("Finished saving all files!")
     return
+# ---------------------------------------------
+def interpolate_spec_2d(d, Lx, Ly, nf):
+    """Interpolate a 3d dataarray d spectrally in x,y wavenumbers
+    input d: original data
+    input Lx: length of domain in x-dimension
+    input Ly: length of domain in x-dimension
+    input nf: factor by which to increase number of points in both x & y dim
+    output dint: interpolated DataArray
+    """
+    # compute new arrays of x, y for storing into dataarray later
+    nx, ny = d.x.size, d.y.size
+    nx2, ny2 = nf*nx, nf*ny
+    x2, y2 = np.linspace(0, Lx, nx2), np.linspace(0, Ly, ny2)
+    # take FFT of d
+    f_d = xrft.fft(d, dim=("x","y"), true_phase=True, 
+                   true_amplitude=True).compute()
+    # pad by factor nf
+    npadx = (nx//2)*(nf-1)
+    npady = (ny//2)*(nf-1)
+    f_d_pad = xrft.padding.pad(f_d, freq_x=npadx, freq_y=npady)
+    # take IFFT of padded array
+    d_int = xrft.ifft(f_d_pad, dim=("freq_x","freq_y"), 
+                      true_phase=True, true_amplitude=True,
+                      lag=(f_d.freq_x.direct_lag, f_d.freq_y.direct_lag)).real
+    # redefine x and y in d_int then return
+    d_int["x"] = x2
+    d_int["y"] = y2
+    return d_int
