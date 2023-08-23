@@ -82,7 +82,7 @@ def autocorr_1d(dnc, df, detrend="constant"):
     print("Finished computing 1d autocorrelation functions!")
     return
 # --------------------------------
-def autocorr_2d(dnc, df, timeavg=True):
+def autocorr_2d(dnc, df, var, timeavg=True):
     """Input 4D xarray Dataset with loaded LES data to calculate
     2d autocorrelation function in x-y planes, then average in
     time (if desired). Calculate for u, v, w, theta, u_rot, v_rot.
@@ -95,7 +95,7 @@ def autocorr_2d(dnc, df, timeavg=True):
     # construct Dataset to save
     Rsave = xr.Dataset(data_vars=None, attrs=df.attrs)
     # variables to loop over for calculations
-    vall = ["u", "v", "w", "theta", "u_rot", "v_rot"]
+    vall = var
 
     # loop over variables
     for v in vall:
@@ -116,7 +116,7 @@ def autocorr_2d(dnc, df, timeavg=True):
             Rsave[v] = R.mean(dim=("time"))
         else:
             Rsave[v] = R
-    
+     
     # save nc file
     fsave = f"{dnc}R_2d.nc"
     print(f"Saving file: {fsave}")
