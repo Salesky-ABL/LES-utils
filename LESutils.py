@@ -702,7 +702,7 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None, rotate=False):
     return dd
 # ---------------------------------------------
 def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, 
-                      nhr, tf, simlabel, del_raw=False):
+                      nz_mpi, nhr, tf, simlabel, del_raw=False):
     """Load raw timeseries data at each level and combine into single
     netcdf file with dimensions (time, z)
     :param str dout: absolute path to directory with LES output binary files
@@ -713,6 +713,7 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz,
     :param float delta_t: dimensional timestep in simulation (seconds)
     :param int nz: resolution of simulation in vertical
     :param float Lz: height of domain in m
+    :param int nz_mpi: number of vertical levels per MPI process
     :param float nhr: number of hours to load, counting backwards from end
     :param int tf: final timestep in file
     :param str simlabel: unique identifier for batch of files
@@ -749,33 +750,42 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz,
     (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
                   dims=("t", "z"), coords=dict(t=time, z=zw)) for _ in range(5))
     fout_all = []
-    # now loop through each file (one for each jz)
-    for jz in range(nz):
-        print(f"Loading timeseries data, jz={jz}")
-        fu = f"{dout}u_timeseries_c{jz:03d}.out"
-        u_ts[:,jz] = np.loadtxt(fu, skiprows=istart, usecols=1)
-        fv = f"{dout}v_timeseries_c{jz:03d}.out"
-        v_ts[:,jz] = np.loadtxt(fv, skiprows=istart, usecols=1)
-        fw = f"{dout}w_timeseries_c{jz:03d}.out"
-        w_ts[:,jz] = np.loadtxt(fw, skiprows=istart, usecols=1)
-        ftheta = f"{dout}t_timeseries_c{jz:03d}.out"
-        theta_ts[:,jz] = np.loadtxt(ftheta, skiprows=istart, usecols=1)
-        ftxz = f"{dout}txz_timeseries_c{jz:03d}.out"
-        txz_ts[:,jz] = np.loadtxt(ftxz, skiprows=istart, usecols=1)
-        ftyz = f"{dout}tyz_timeseries_c{jz:03d}.out"
-        tyz_ts[:,jz] = np.loadtxt(ftyz, skiprows=istart, usecols=1)
-        fq3 = f"{dout}q3_timeseries_c{jz:03d}.out"
-        q3_ts[:,jz] = np.loadtxt(fq3, skiprows=istart, usecols=1)
+    # compute number of MPI levels
+    nmpi = nz // nz_mpi
+    # now loop through each file (one for each mpi process)
+    # there are nz_mpi columns in each file!
+    # initialize jz counter index for first nz_mpi columns
+    jz = np.arange(nz_mpi, dtype=np.int32)
+    # initialze range counter for which columns to use
+    cols = range(1, nz_mpi+1)
+    for jmpi in range(nmpi):
+        print(f"Loading timeseries data, jz={jmpi}")
+        fu = f"{dout}u_timeseries_c{jmpi:03d}.out"
+        u_ts[:,jz] = np.loadtxt(fu, skiprows=istart, usecols=cols)
+        fv = f"{dout}v_timeseries_c{jmpi:03d}.out"
+        v_ts[:,jz] = np.loadtxt(fv, skiprows=istart, usecols=cols)
+        fw = f"{dout}w_timeseries_c{jmpi:03d}.out"
+        w_ts[:,jz] = np.loadtxt(fw, skiprows=istart, usecols=cols)
+        ftheta = f"{dout}t_timeseries_c{jmpi:03d}.out"
+        theta_ts[:,jz] = np.loadtxt(ftheta, skiprows=istart, usecols=cols)
+        ftxz = f"{dout}txz_timeseries_c{jmpi:03d}.out"
+        txz_ts[:,jz] = np.loadtxt(ftxz, skiprows=istart, usecols=cols)
+        ftyz = f"{dout}tyz_timeseries_c{jmpi:03d}.out"
+        tyz_ts[:,jz] = np.loadtxt(ftyz, skiprows=istart, usecols=cols)
+        fq3 = f"{dout}q3_timeseries_c{jmpi:03d}.out"
+        q3_ts[:,jz] = np.loadtxt(fq3, skiprows=istart, usecols=cols)
         fout_all += [fu, fv, fw, ftheta, ftxz, ftyz, fq3]
         # load q
         if use_q:
-            fq = f"{dout}q_timeseries_c{jz:03d}.out"
-            q_ts[:,jz] = np.loadtxt(fq, skiprows=istart, usecols=1)
-            ftv = f"{dout}tv_timeseries_c{jz:03d}.out"
-            thetav_ts[:,jz] = np.loadtxt(ftv, skiprows=istart, usecols=1)
-            fqw = f"{dout}wq_sgs_timeseries_c{jz:03d}.out"
-            wq_sgs_ts[:,jz] = np.loadtxt(fqw, skiprows=istart, usecols=1)
+            fq = f"{dout}q_timeseries_c{jmpi:03d}.out"
+            q_ts[:,jz] = np.loadtxt(fq, skiprows=istart, usecols=cols)
+            ftv = f"{dout}tv_timeseries_c{jmpi:03d}.out"
+            thetav_ts[:,jz] = np.loadtxt(ftv, skiprows=istart, usecols=cols)
+            fqw = f"{dout}wq_sgs_timeseries_c{jmpi:03d}.out"
+            wq_sgs_ts[:,jz] = np.loadtxt(fqw, skiprows=istart, usecols=cols)
             fout_all += [fq, ftv, fqw]
+        # increment jz
+        jz += nz_mpi
     # apply scales
     u_ts *= u_scale
     v_ts *= u_scale
