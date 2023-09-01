@@ -27,25 +27,24 @@ def update_log(dnc, fstats, dlog, flog, SBL=False):
     """
     # define some constants
     Lv = 2.5e6 # J / kg
-    cp = 1004  # J / kg K
-    rho = 1.2  # kg / m^3
+    cp = 1004.  # J / kg K
     # load stats file
     s = load_stats(dnc+fstats, SBL=SBL)
     # calculate important parameters for saving to log file
     # -zi/L
     ziL = -1 * (s.h / s.L).values
     # grab surface, entrianment zone values of qw
-    qw_e = s.qw_cov_tot.sel(z=s.h, method="nearest").values
-    qw_s = s.qw_cov_tot.isel(z=0).values
+    qw_e = s.qw_cov_tot.sel(z=s.h, method="nearest").values / 1000.
+    qw_s = s.qw_cov_tot.isel(z=0).values / 1000.
     # grab surface values of tw
     tw_s = s.tw_cov_tot.isel(z=0).values
     # ratio
     qw_ratio = qw_s/qw_e
     qw_angle = np.arctan(qw_ratio) * 180 / np.pi
     # evaporative fraction
-    Ef = (Lv * qw_s/1000) / ((cp*tw_s) + (Lv*qw_s/1000))
+    Ef = (Lv * qw_s) / ((cp*tw_s) + (Lv*qw_s))
     # Bowen ratio
-    B = (cp*tw_s) / (Lv*qw_s/1000)
+    B = (cp*tw_s) / (Lv*qw_s)
 
     # create dictionary to hold info to save
     newlog = {}
