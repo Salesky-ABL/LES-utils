@@ -1157,7 +1157,7 @@ def xr_rotate(df):
     # check against what is actually in df
     vhave = [key for key in vuse if key in list(df.keys())]
     # initialize empty Dataset to store rotated data
-    df_rot = xr.Dataset()
+    df_rot = xr.Dataset(data_vars=None, coords=dict(x=x, y=y, z=z), attrs=df.attrs)
     # calculate wind angles
     u = df.u
     v = df.v
@@ -1185,8 +1185,6 @@ def xr_rotate(df):
     # calculate using xarray implicit
     df_rot["u_rot"] = df_rot.u*np.cos(angle_r) + df_rot.v*np.sin(angle_r)
     df_rot["v_rot"] =-df_rot.u*np.sin(angle_r) + df_rot.v*np.cos(angle_r)
-    # add attrs from df
-    df_rot.attrs = df.attrs
     # add another attribute for rotate
     df_rot.attrs["rotate"] = "True"
     # return
