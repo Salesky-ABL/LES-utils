@@ -41,42 +41,29 @@ def read_f90_bin(path, nx, ny, nz, precision):
 
     return dat
 # ---------------------------------------------
-def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt, 
-               use_dissip, use_q, simlabel, units=None, del_raw=False):
+def sim2netcdf(dout, timestep, del_raw=False, **params):
     """Read binary output files from LES code and combine into one netcdf
-    file per timestep using xarray for future reading and easier analysis
-
-    :param str dout: absolute path to directory with LES output binary files
-    :param str dnc: absolute path to directory for saving output netCDF files
-    :param tuple<int> resolution: simulation resolution (nx, ny, nz)
-    :param tuple<Quantity> dimensions: simulation dimensions (Lx, Ly, Lz)
-    :param tuple<Quantity> scales: dimensional scales from LES code\
-        (uscale, Tscale, qscale)
-    :param int t0: first timestep to process
-    :param int t1: last timestep to process
-    :param int dt: number of timesteps between files to load
-    :param bool use_dissip: flag for loading dissipation rate files (les_brg only)
-    :param bool use_q: flag for loading specific humidity files (les_brg only)
-    :param str simlabel: unique identifier for batch of files
-    :param dict units: dictionary of units corresponding to each loaded\
-        variable. Default values hard-coded in this function
-    :param bool del_raw: automatically delete raw .out files from LES code\
+    file per timestep using xarray for future reading and easier analysis.
+    Looks for the following: 
+    u, v, w, theta, q, txz, tyz, q3, wq_sgs, dissip.
+    -Input-
+    dout: string, absolute path to directory with raw binary output
+    timestep: integer timestep of files to process
+    del_raw: boolean flag to automatically delete raw .out files\
         to save space, default=False
+    params: dictionary with output from params.yaml file
+    -Output-
+    single netcdf file with convention 'dout/netcdf/all_<timestep>.nc'
     """
-    # check if dnc exists
-    if not os.path.exists(dnc):
-        os.mkdir(dnc)
     # grab relevent parameters
-    nx, ny, nz = resolution
-    Lx, Ly, Lz = dimensions
-    dx, dy, dz = Lx/nx, Ly/ny, Lz/nz
-    u_scale = scales[0]
-    theta_scale = scales[1]
-    if use_q:
-        q_scale = scales[2]
-    # define timestep array
-    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
-    nt = len(timesteps)
+    nx, ny, nz = params["nx"], params["ny"], params["nz"]
+    Lx, Ly, Lz = params["Lx"], params["Ly"], params["Lz"]
+    dz = Lz/nz
+    u_scale = params["u_scale"]
+    theta_scale = params["T_scale"]
+    q_scale = params["q_scale"]
+    # create simlabel from file save path
+    simlabel = params["path"].split(os.sep)[-1]
     # dimensions
     x, y = np.linspace(0., Lx, nx), np.linspace(0, Ly, ny)
     # u- and w-nodes are staggered
@@ -86,135 +73,121 @@ def sim2netcdf(dout, dnc, resolution, dimensions, scales, t0, t1, dt,
     zw = np.linspace(0., Lz, nz)
     zu = np.linspace(dz/2., Lz+dz/2., nz)
     # --------------------------------
-    # Loop over timesteps to load and save new files
+    # Read binary and save new files
     # --------------------------------
-    for i in range(nt):
-        # load files - DONT FORGET SCALES!
-        f1 = f"{dout}u_{timesteps[i]:07d}.out"
-        u_in = read_f90_bin(f1,nx,ny,nz,8) * u_scale
-        f2 = f"{dout}v_{timesteps[i]:07d}.out"
-        v_in = read_f90_bin(f2,nx,ny,nz,8) * u_scale
-        f3 = f"{dout}w_{timesteps[i]:07d}.out"
-        w_in = read_f90_bin(f3,nx,ny,nz,8) * u_scale
-        f4 = f"{dout}theta_{timesteps[i]:07d}.out"
-        theta_in = read_f90_bin(f4,nx,ny,nz,8) * theta_scale
-        f5 = f"{dout}txz_{timesteps[i]:07d}.out"
-        txz_in = read_f90_bin(f5,nx,ny,nz,8) * u_scale * u_scale
-        f6 = f"{dout}tyz_{timesteps[i]:07d}.out"
-        tyz_in = read_f90_bin(f6,nx,ny,nz,8) * u_scale * u_scale
-        f7 = f"{dout}q3_{timesteps[i]:07d}.out"
-        q3_in = read_f90_bin(f7,nx,ny,nz,8) * u_scale * theta_scale
-        # list of all out files
-        fout_all = [f1, f2, f3, f4, f5, f6, f7]
-        # interpolate w, txz, tyz, q3, wq_sgs to u grid
-        # create DataArrays
-        w_da = xr.DataArray(w_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
-        txz_da = xr.DataArray(txz_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
-        tyz_da = xr.DataArray(tyz_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
-        q3_da = xr.DataArray(q3_in, dims=("x", "y", "z"), coords=dict(x=x, y=y, z=zw))
-        # perform interpolation
-        w_interp = w_da.interp(z=zu, method="linear", 
+    # load and apply scales
+    f1 = f"{dout}u_{timestep:07d}.out"
+    u_in = read_f90_bin(f1,nx,ny,nz,8) * u_scale
+    f2 = f"{dout}v_{timestep:07d}.out"
+    v_in = read_f90_bin(f2,nx,ny,nz,8) * u_scale
+    f3 = f"{dout}w_{timestep:07d}.out"
+    w_in = read_f90_bin(f3,nx,ny,nz,8) * u_scale
+    f4 = f"{dout}theta_{timestep:07d}.out"
+    theta_in = read_f90_bin(f4,nx,ny,nz,8) * theta_scale
+    f5 = f"{dout}txz_{timestep:07d}.out"
+    txz_in = read_f90_bin(f5,nx,ny,nz,8) * u_scale * u_scale
+    f6 = f"{dout}tyz_{timestep:07d}.out"
+    tyz_in = read_f90_bin(f6,nx,ny,nz,8) * u_scale * u_scale
+    f7 = f"{dout}q3_{timestep:07d}.out"
+    q3_in = read_f90_bin(f7,nx,ny,nz,8) * u_scale * theta_scale
+    f8 = f"{dout}q_{timestep:07d}.out"
+    q_in = read_f90_bin(f8,nx,ny,nz,8) * q_scale
+    f9 = f"{dout}wq_sgs_{timestep:07d}.out"
+    wq_sgs_in = read_f90_bin(f9,nx,ny,nz,8) * u_scale * q_scale    
+    fd = f"{dout}dissip_{timestep:07d}.out"
+    diss_in = read_f90_bin(fd,nx,ny,nz,8) * u_scale * u_scale * u_scale / Lz
+    # list of all out files for cleanup later
+    fout_all = [f1, f2, f3, f4, f5, f6, f7, f8, f9, fd]
+    # interpolate w, txz, tyz, q3, wq_sgs, dissip to u grid
+    # create DataArrays
+    w_da = xr.DataArray(w_in, dims=("x", "y", "z"), 
+                        coords=dict(x=x, y=y, z=zw))
+    txz_da = xr.DataArray(txz_in, dims=("x", "y", "z"), 
+                          coords=dict(x=x, y=y, z=zw))
+    tyz_da = xr.DataArray(tyz_in, dims=("x", "y", "z"), 
+                          coords=dict(x=x, y=y, z=zw))
+    q3_da = xr.DataArray(q3_in, dims=("x", "y", "z"), 
+                         coords=dict(x=x, y=y, z=zw))
+    diss_da = xr.DataArray(diss_in, dims=("x", "y", "z"), 
+                           coords=dict(x=x, y=y, z=zw))
+    wq_sgs_da = xr.DataArray(wq_sgs_in, dims=("x", "y", "z"), 
+                             coords=dict(x=x, y=y, z=zw))
+    # perform interpolation
+    w_interp = w_da.interp(z=zu, method="linear", 
+                           kwargs={"fill_value": "extrapolate"})
+    txz_interp = txz_da.interp(z=zu, method="linear", 
                                kwargs={"fill_value": "extrapolate"})
-        txz_interp = txz_da.interp(z=zu, method="linear", 
-                                   kwargs={"fill_value": "extrapolate"})
-        tyz_interp = tyz_da.interp(z=zu, method="linear", 
-                                   kwargs={"fill_value": "extrapolate"})
-        q3_interp = q3_da.interp(z=zu, method="linear", 
+    tyz_interp = tyz_da.interp(z=zu, method="linear", 
+                               kwargs={"fill_value": "extrapolate"})
+    q3_interp = q3_da.interp(z=zu, method="linear", 
+                             kwargs={"fill_value": "extrapolate"})
+    diss_interp = diss_da.interp(z=zu, method="linear", 
                                  kwargs={"fill_value": "extrapolate"})
-        # construct dictionary of data to save -- u-node variables only!
-        data_save = {
-                        "u": (["x","y","z"], u_in),
-                        "v": (["x","y","z"], v_in),
-                        "theta": (["x","y","z"], theta_in)
-                    }
-        # check fo using dissipation files
-        if use_dissip:
-            # read binary file
-            fd = f"{dout}dissip_{timesteps[i]:07d}.out"
-            diss_in = read_f90_bin(fd,nx,ny,nz,8) * u_scale * u_scale * u_scale / Lz
-            fout_all += [fd]
-            # interpolate to u-nodes
-            diss_da = xr.DataArray(diss_in, dims=("x", "y", "z"), 
-                                   coords=dict(x=x, y=y, z=zw))
-            diss_interp = diss_da.interp(z=zu, method="linear", 
-                                         kwargs={"fill_value": "extrapolate"})
-        if use_q:
-            # read binary files
-            f8 = f"{dout}q_{timesteps[i]:07d}.out"
-            q_in = read_f90_bin(f8,nx,ny,nz,8) * q_scale
-            f9 = f"{dout}wq_sgs_{timesteps[i]:07d}.out"
-            wq_sgs_in = read_f90_bin(f9,nx,ny,nz,8) * u_scale * q_scale
-            fout_all += [f8, f9]
-            # add q to data_save
-            data_save["q"] = (["x","y","z"], q_in)
-            # interpolate to u-nodes
-            wq_sgs_da = xr.DataArray(wq_sgs_in, dims=("x", "y", "z"), 
-                                     coords=dict(x=x, y=y, z=zw))
-            wq_sgs_interp = wq_sgs_da.interp(z=zu, method="linear", 
+    wq_sgs_interp = wq_sgs_da.interp(z=zu, method="linear", 
                                      kwargs={"fill_value": "extrapolate"})
-        # construct dataset from these variables
-        ds = xr.Dataset(
-            data_save,
-            coords={
-                "x": x,
-                "y": y,
-                "z": zu
-            },
-            attrs={
-                "nx": nx,
-                "ny": ny,
-                "nz": nz,
-                "Lx": Lx,
-                "Ly": Ly,
-                "Lz": Lz,
-                "dx": dx,
-                "dy": dy,
-                "dz": dz,
-                "label": simlabel
-            })
-        # now assign interpolated arrays that were on w-nodes
-        ds["w"] = w_interp
-        ds["txz"] = txz_interp
-        ds["tyz"] = tyz_interp
-        ds["q3"] = q3_interp
-        if use_q:
-            ds["wq_sgs"] = wq_sgs_interp
-        if use_dissip:
-            ds["dissip"] = diss_interp
-        # hardcode dictionary of units to use by default
-        if units is None:
-            units = {
-                "u": "m/s",
-                "v": "m/s",
-                "w": "m/s",
-                "theta": "K",
-                "q": "g/kg",
-                "txz": "m^2/s^2",
-                "tyz": "m^2/s^2",
-                "q3": "K m/s",
-                "wq_sgs": "m/s g/kg",
-                "dissip": "m^2/s^3",
-                "x": "m",
-                "y": "m",
-                "z": "m"
-            }
+    # construct dictionary of data to save -- u-node variables only!
+    data_save = {
+                 "u": (["x","y","z"], u_in),
+                 "v": (["x","y","z"], v_in),
+                 "theta": (["x","y","z"], theta_in),
+                 "q": (["x","y","z"], q_in)
+                }
 
-        # loop and assign attributes
-        for var in list(data_save.keys())+["x", "y", "z"]:
-            ds[var].attrs["units"] = units[var]
-        # save to netcdf file and continue
-        fsave = f"{dnc}all_{timesteps[i]:07d}.nc"
-        print(f"Saving file: {fsave.split(os.sep)[-1]}")
-        ds.to_netcdf(fsave)
+    # construct dataset from these variables
+    ds = xr.Dataset(
+        data_save,
+        coords={
+            "x": x,
+            "y": y,
+            "z": zu
+        },
+        attrs={
+            "label": simlabel,
+            **params
+        })
+    # now assign interpolated arrays that were on w-nodes
+    ds["w"] = w_interp
+    ds["txz"] = txz_interp
+    ds["tyz"] = tyz_interp
+    ds["q3"] = q3_interp
+    ds["wq_sgs"] = wq_sgs_interp
+    ds["dissip"] = diss_interp
+    # hardcode dictionary of units to use by default
+    if units is None:
+        units = {
+            "u": "m/s",
+            "v": "m/s",
+            "w": "m/s",
+            "theta": "K",
+            "q": "g/kg",
+            "txz": "m^2/s^2",
+            "tyz": "m^2/s^2",
+            "q3": "K m/s",
+            "wq_sgs": "m/s g/kg",
+            "dissip": "m^2/s^3",
+            "x": "m",
+            "y": "m",
+            "z": "m"
+        }
 
-        # delete files from this timestep if desired
-        if del_raw:
-            print("Cleaning up raw files...")
-            for ff in fout_all:
-                os.system(f"rm {ff}")
+    # loop and assign attributes
+    for var in list(data_save.keys())+["x", "y", "z"]:
+        ds[var].attrs["units"] = units[var]
+    # save to netcdf file and continue
+    fsave = f"{dout}netcdf/all_{timestep:07d}.nc"
+    print(f"Saving file: {fsave.split(os.sep)[-1]}")
+    ds.to_netcdf(fsave)
 
-    print("Finished saving all files!")
+    # delete files from this timestep if desired
+    if del_raw:
+        print("Cleaning up raw files...")
+        for ff in fout_all:
+            os.system(f"rm {ff}")
+
     return
+# ---------------------------------------------
+
+
 # ---------------------------------------------
 def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
                rotate):
