@@ -9,6 +9,7 @@
 # calculating commonly-used statistics
 # --------------------------------
 import os
+import yaml
 import xrft
 import xarray as xr
 import numpy as np
@@ -41,7 +42,7 @@ def read_f90_bin(path, nx, ny, nz, precision):
 
     return dat
 # ---------------------------------------------
-def sim2netcdf(dout, timestep, del_raw=False, **params):
+def out2netcdf(dout, timestep, del_raw=False, **params):
     """Read binary output files from LES code and combine into one netcdf
     file per timestep using xarray for future reading and easier analysis.
     Looks for the following: 
@@ -62,8 +63,6 @@ def sim2netcdf(dout, timestep, del_raw=False, **params):
     u_scale = params["u_scale"]
     theta_scale = params["T_scale"]
     q_scale = params["q_scale"]
-    # create simlabel from file save path
-    simlabel = params["path"].split(os.sep)[-1]
     # dimensions
     x, y = np.linspace(0., Lx, nx), np.linspace(0, Ly, ny)
     # u- and w-nodes are staggered
@@ -134,17 +133,7 @@ def sim2netcdf(dout, timestep, del_raw=False, **params):
                 }
 
     # construct dataset from these variables
-    ds = xr.Dataset(
-        data_save,
-        coords={
-            "x": x,
-            "y": y,
-            "z": zu
-        },
-        attrs={
-            "label": simlabel,
-            **params
-        })
+    ds = xr.Dataset(data_save, coords=dict(x=x, y=y, z=zu), attrs=params)
     # now assign interpolated arrays that were on w-nodes
     ds["w"] = w_interp
     ds["txz"] = txz_interp
@@ -186,8 +175,53 @@ def sim2netcdf(dout, timestep, del_raw=False, **params):
 
     return
 # ---------------------------------------------
+def process_raw_sim(dout, nhr, del_raw, overwrite=False):
+    """Use information from dout/param.yaml file to dynamically process raw 
+    output files with out2netcdf function for a desired time period of files.
+    -Input-
+    dout: string, absolute path to output files
+    nhr: float, number of physical hours to process. Will use information from\
+        param file to dynamically select files.
+    del_raw: boolean, flag to pass to out2netcdf for cleaning up raw files
+    overwrite: boolean, flag to overwrite output file in case it already exists.
+    -Output-
+    single netcdf file for each timestep in the range nhr.
+    """
+    # import yaml file
+    with open(dout+"params.yaml") as fp:
+        params = yaml.safe_load(fp)
+    # add simulation label to params
+    params["simlabel"] = params["path"].split(os.sep)[-1]
+    # determine range of files from info in params
+    tf = params["jt_final"]
+    nf = int(nhr / params["dt"]) // params["twrite"]
+    t0 = tf - nf
+    timesteps = np.arange(t0, tf+1, params["twrite"], dtype=np.int32)
+    print(f"Processing {nhr} hours = {nf} timesteps from t0={t0} to tf={tf}")
+    # check if netcdf directory exists
+    dnc = f"{dout}netcdf/"
+    if not os.path.exists(dnc):
+        os.system(f"mkdir {dnc}")
 
+    # loop over timesteps and call out2netcdf
+    for tt in timesteps:
+        # check if all_{tt}.nc exists already
+        f_ts = f"{dnc}all_{tt:07d}.nc"
+        if not os.path.exists(f_ts):
+            print(f"Processing timestep: {tt}")
+            out2netcdf(dout, tt, del_raw=del_raw, **params)
+        elif (os.path.exists(f_ts) & overwrite):
+            print(f"{f_ts} already exists!")
+            # need to check if the raw out files exist -- just look at u
+            if os.path.exists(f"{dout}u_{tt:07d}.out"):
+                print(f"overwrite=True and raw files exist, continuing...")
+                out2netcdf(dout, tt, del_raw=del_raw, **params)
+            else:
+                print("overwrite=True but raw files deleted, skip timestep.")
+        else:
+            print(f"{f_ts} already exists! Skipping to next timestep.")
 
+    return
 # ---------------------------------------------
 def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
                rotate):
