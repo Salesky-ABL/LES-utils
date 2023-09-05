@@ -303,7 +303,7 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
     # define lists of desired parameters and their corresponding variances
     # 1st order - vars from stat file
     vRFM1 = ["u", "u_rot", "v", "v_rot", "theta"]
-    vvar1 = ["u_var, u_var_rot", "v_var", "v_var_rot", "theta_var"]
+    vvar1 = ["u_var", "u_var_rot", "v_var", "v_var_rot", "theta_var"]
     # 2nd order - vars from var4 file
     vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt"]
     vvar2 = ["uwuw_var", "vwvw_var", "twtw_var", "uuuu_var", "uuuur_var",
@@ -407,7 +407,7 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     # define lists of desired parameters and their corresponding variances
     # 1st order - vars from stat file
     vRFM1 = ["u", "u_rot", "v", "v_rot", "theta"]
-    vvar1 = ["u_var, u_var_rot", "v_var", "v_var_rot", "theta_var"]
+    vvar1 = ["u_var", "u_var_rot", "v_var", "v_var_rot", "theta_var"]
     vavg1 = ["u_mean", "u_mean_rot", "v_mean", "v_mean_rot", "theta_mean"]
     # 2nd order - vars from var4 file
     vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt"]
@@ -466,8 +466,8 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
                   wdir.isel(z=range(nzabl))
     # calculate errors in ustar^2 for coordinate-agnostic horiz Reynolds stress
     # ustar2 = (<u'w'>^2 + <v'w'>^2) ^ 1/2
-    sig_uw = np.sqrt(MSE["uw_cov_tot"])
-    sig_vw = np.sqrt(MSE["vw_cov_tot"])
+    sig_uw = np.sqrt(MSE["uw"])
+    sig_vw = np.sqrt(MSE["vw"])
     err["ustar2"] = np.sqrt( (sig_uw**2. * s.uw_cov_tot.isel(z=range(nzabl))**2. +\
                               sig_vw**2. * s.vw_cov_tot.isel(z=range(nzabl))**2.)/\
                               (s.ustar2.isel(z=range(nzabl))**2.)) / \
@@ -494,7 +494,35 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     # loop through second-order moments
     for v, var, avg in zip(vRFM2, vvar2, vavg2):
         err_LP[v] = np.sqrt((2. * L[v] * var4[var].isel(z=range(nzabl)))/\
-                            (X1 * s[avg].isel(z=range(nzabl))**2.))
+                            (X2 * s[avg].isel(z=range(nzabl))**2.))
+    # again
+    # calculate errors in wind speed and direction using error propagation
+    # grab individual RMSEs
+    sig_u = err_LP["u"] * s.u_mean.isel(z=range(nzabl))
+    sig_v = err_LP["v"] * s.v_mean.isel(z=range(nzabl))
+    # calculate wspd error and store
+    err_LP["wspd"] = np.sqrt( (sig_u**2. * s.u_mean.isel(z=range(nzabl))**2. +\
+                               sig_v**2. * s.v_mean.isel(z=range(nzabl))**2.)/\
+                              (s.u_mean.isel(z=range(nzabl))**2. +\
+                               s.v_mean.isel(z=range(nzabl))**2.) ) /\
+                     s.uh.isel(z=range(nzabl))
+    # calculate wdir error and store
+    # first get wdir in radians
+    wdir = s.wdir * np.pi/180.
+    err_LP["wdir"] = np.sqrt( (sig_u**2. * s.u_mean.isel(z=range(nzabl))**2. +\
+                               sig_v**2. * s.v_mean.isel(z=range(nzabl))**2.)/\
+                              ((s.u_mean.isel(z=range(nzabl))**2. +\
+                                s.v_mean.isel(z=range(nzabl))**2.)**2.) ) /\
+                     wdir.isel(z=range(nzabl))
+    # calculate errors in ustar^2 for coordinate-agnostic horiz Reynolds stress
+    # ustar2 = (<u'w'>^2 + <v'w'>^2) ^ 1/2
+    sig_uw = err_LP["uw"] * s.uw_cov_tot.isel(z=range(nzabl))
+    sig_vw = err_LP["vw"] * s.vw_cov_tot.isel(z=range(nzabl))
+    err_LP["ustar2"] = np.sqrt( (sig_uw**2. * s.uw_cov_tot.isel(z=range(nzabl))**2. +\
+                                 sig_vw**2. * s.vw_cov_tot.isel(z=range(nzabl))**2.)/\
+                                (s.ustar2.isel(z=range(nzabl))**2.)) / \
+                       s.ustar2.isel(z=range(nzabl))
+
     # save err_LP as netcdf
     fsave_LP = f"{dnc}err_LP.nc"
     if os.path.exists(fsave_LP):
@@ -540,6 +568,7 @@ if __name__ == "__main__":
     p = xr.load_dataset(dnc+"fit_p.nc")
 
     # compute integral lengthscales using calc_lengthscale
+    print("Calculating lengthscales")
     calc_lengthscale(dnc, R)
     # load
     L = xr.load_dataset(dnc+"lengthscale.nc")
