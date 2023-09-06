@@ -142,8 +142,7 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
     ds["wq_sgs"] = wq_sgs_interp
     ds["dissip"] = diss_interp
     # hardcode dictionary of units to use by default
-    if units is None:
-        units = {
+    units = {
             "u": "m/s",
             "v": "m/s",
             "w": "m/s",
@@ -157,7 +156,7 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
             "x": "m",
             "y": "m",
             "z": "m"
-        }
+            }
 
     # loop and assign attributes
     for var in list(data_save.keys())+["x", "y", "z"]:
@@ -195,12 +194,13 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
     with open(dout+"params.yaml") as fp:
         params = yaml.safe_load(fp)
     # add simulation label to params
-    params["simlabel"] = params["path"].split(os.sep)[-1]
+    params["simlabel"] = params["path"].split(os.sep)[-2]
     # determine range of files from info in params
     tf = params["jt_final"]
-    nf = int(nhr / params["dt"]) // params["nwrite"]
-    t0 = tf - nf
+    nt = int(nhr*3600. / params["dt"])
+    t0 = tf - nt
     timesteps = np.arange(t0, tf+1, params["nwrite"], dtype=np.int32)
+    nf = len(timesteps)
     print(f"Processing {nhr} hours = {nf} timesteps from t0={t0} to tf={tf}")
     # check if netcdf directory exists
     dnc = f"{dout}netcdf/"
