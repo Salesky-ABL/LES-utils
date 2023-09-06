@@ -175,15 +175,19 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
 
     return
 # ---------------------------------------------
-def process_raw_sim(dout, nhr, del_raw, overwrite=False):
+def process_raw_sim(dout, nhr, del_raw, overwrite=False, 
+                    cstats=True, rotate=False):
     """Use information from dout/param.yaml file to dynamically process raw 
     output files with out2netcdf function for a desired time period of files.
+    Optional additional processing: calc_stats(), nc_rot().
     -Input-
     dout: string, absolute path to output files
     nhr: float, number of physical hours to process. Will use information from\
         param file to dynamically select files.
     del_raw: boolean, flag to pass to out2netcdf for cleaning up raw files
     overwrite: boolean, flag to overwrite output file in case it already exists.
+    cstats: boolean, call calc_stats on the range determined for out2netcdf.
+    rotate: boolean, call nc_rot on the same files as out2netcdf.
     -Output-
     single netcdf file for each timestep in the range nhr.
     """
@@ -196,7 +200,7 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False):
     tf = params["jt_final"]
     nf = int(nhr / params["dt"]) // params["nwrite"]
     t0 = tf - nf
-    timesteps = np.arange(t0, tf+1, params["twrite"], dtype=np.int32)
+    timesteps = np.arange(t0, tf+1, params["nwrite"], dtype=np.int32)
     print(f"Processing {nhr} hours = {nf} timesteps from t0={t0} to tf={tf}")
     # check if netcdf directory exists
     dnc = f"{dout}netcdf/"
@@ -204,14 +208,17 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False):
         os.system(f"mkdir {dnc}")
 
     # loop over timesteps and call out2netcdf
+    # store filenames created
+    f_all = []
     for tt in timesteps:
         # check if all_{tt}.nc exists already
-        f_ts = f"{dnc}all_{tt:07d}.nc"
-        if not os.path.exists(f_ts):
+        ff = f"{dnc}all_{tt:07d}.nc"
+        f_all.append(ff)
+        if not os.path.exists(ff):
             print(f"Processing timestep: {tt}")
             out2netcdf(dout, tt, del_raw=del_raw, **params)
-        elif (os.path.exists(f_ts) & overwrite):
-            print(f"{f_ts} already exists!")
+        elif (os.path.exists(ff) & overwrite):
+            print(f"{ff} already exists!")
             # need to check if the raw out files exist -- just look at u
             if os.path.exists(f"{dout}u_{tt:07d}.out"):
                 print(f"overwrite=True and raw files exist, continuing...")
@@ -219,37 +226,49 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False):
             else:
                 print("overwrite=True but raw files deleted, skip timestep.")
         else:
-            print(f"{f_ts} already exists! Skipping to next timestep.")
+            print(f"{ff} already exists! Skipping to next timestep.")
+
+    # run calc_stats()
+    if cstats:
+        print(f"Begin calculating stats for final {nhr} hours...")
+        calc_stats(f_use=f_all, **params)
 
     return
 # ---------------------------------------------
-def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
-               rotate):
-    """Read multiple output netcdf files created by sim2netcdf() to calculate
-    averages in x, y, t and save as new netcdf file
-
-    :param str dnc: absolute path to directory for loading netCDF files
-    :param int t0: first timestep to process
-    :param int t1: last timestep to process
-    :param int dt: number of timesteps between files to load
-    :param float delta_t: dimensional timestep in simulation (seconds)
-    :param bool use_dissip: flag for loading dissipation rate files (SBL only)
-    :param bool use_q: flag for loading specific humidity files (les_brg only)
-    :param bool detrend_stats: flag for detrending fields in time when\
-        calculating statistics
-    :param str tavg: label denoting length of temporal averaging (e.g. 1h)
-    :param bool rotate: flag for using rotated volume files
+def calc_stats(f_use=None, nhr=None, **params):
+    """Read multiple output netcdf files created by out2netcdf() to calculate
+    averages in x, y, t and save as new netcdf file. Directly input the names
+    of files to read, or state how many hours to process and dynamically
+    determine file names from information in params kwargs.
+    -Input-
+    f_use: list of filename strings to read directly if not None
+    nhr: float, number of hours worth of files to read if not None
+    params: dictionary with relevant simulation information for processing
+    -Output-
+    statistics file with format 'mean_stats_xyt_<t0>-<tf>h.nc'
     """
-    # directories and configuration
-    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
-     # determine files to read from timesteps
-    if rotate:
-        fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
-    else:
+    # make sure params is not empty
+    if len(params.keys()) < 1:
+        print("No parameters provided. Returning without proceeding.")
+        return
+    # construct dnc
+    dnc = f"{params['path']}output/netcdf/"
+
+    # option 1: f_use is not None
+    if f_use is not None:
+        fall = f_use
+    elif nhr is not None:
+        # determine range of files from info in params
+        tf = params["jt_final"]
+        nf = int(nhr / params["dt"]) // params["nwrite"]
+        t0 = tf - nf
+        timesteps = np.arange(t0, tf+1, params["nwrite"], dtype=np.int32)
+        # determine files to read from timesteps
         fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
+    # get length of file list
     nf = len(fall)
     # calculate array of times represented by each file
-    times = np.array([i*delta_t*dt for i in range(nf)])
+    times = np.array([i*params["dt"]*params["nwrite"] for i in range(nf)])
     # --------------------------------
     # Load files and clean up
     # --------------------------------
@@ -262,16 +281,11 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
     # --------------------------------
     print("Beginning calculations")
     # create empty dataset that will hold everything
-    dd_stat = xr.Dataset()
+    dd_stat = xr.Dataset(data_vars=None, coords=dict(z=dd.z), attrs=dd.attrs)
     # list of base variables
-    base = ["u", "v", "w", "theta"]
-    base1 = ["u", "v", "w", "theta"] # use for looping over vars in case dissip not used
-    # check for dissip
-    if use_dissip:
-        base.append("dissip")
-    if use_q:
-        base.append("q")
-        base1 += ["q", "thetav"]
+    base = ["u", "v", "w", "theta", "q", "dissip"]
+    # use for looping over vars in case dissip not used
+    base1 = ["u", "v", "w", "theta", "q", "thetav"]
     # calculate means
     for s in base:
         dd_stat[f"{s}_mean"] = dd[s].mean(dim=("time", "x", "y"))
@@ -285,24 +299,20 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
     # theta'w'
     dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("time", "x", "y"))
     dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd.q3.mean(dim=("time","x","y"))
-    if use_q:
-        # q'w'
-        dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
-        dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
-        # calculate thetav
-        dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
-        dd_stat["thetav_mean"] = dd.thetav.mean(dim=("time","x","y"))
-        # tvw_cov_tot from tw_cov_tot and qw_cov_tot
-        dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
-            0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
+    # q'w'
+    dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
+    dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
+    # calculate thetav
+    dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
+    dd_stat["thetav_mean"] = dd.thetav.mean(dim=("time","x","y"))
+    # tvw_cov_tot from tw_cov_tot and qw_cov_tot
+    dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
+        0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
     # calculate vars
     for s in base1:
-        if detrend_stats:
-            # detrend by subtracting planar averages at each timestep
-            vp = dd[s] - dd[s].mean(dim=("x","y"))
-            dd_stat[f"{s}_var"] = vp.var(dim=("time","x","y"))
-        else:
-            dd_stat[f"{s}_var"] = dd[s].var(dim=("time", "x", "y"))
+        # detrend by subtracting planar averages at each timestep
+        vp = dd[s] - dd[s].mean(dim=("x","y"))
+        dd_stat[f"{s}_var"] = vp.var(dim=("time","x","y"))
     # rotate u_mean and v_mean so <v> = 0
     angle = np.arctan2(dd_stat.v_mean, dd_stat.u_mean)
     dd_stat["u_mean_rot"] = dd_stat.u_mean*np.cos(angle) + dd_stat.v_mean*np.sin(angle)
@@ -313,37 +323,39 @@ def calc_stats(dnc, t0, t1, dt, delta_t, use_dissip, use_q, detrend_stats, tavg,
     u_rot = dd.u*np.cos(angle_inst) + dd.v*np.sin(angle_inst)
     v_rot =-dd.u*np.sin(angle_inst) + dd.v*np.cos(angle_inst)
     # recalculate u_var_rot, v_var_rot
-    if detrend_stats:
-        uvar_rot = u_rot - u_rot.mean(dim=("x","y"))
-        dd_stat["u_var_rot"] = uvar_rot.var(dim=("time","x","y"))
-        vvar_rot = v_rot - v_rot.mean(dim=("x","y"))
-        dd_stat["v_var_rot"] = vvar_rot.var(dim=("time","x","y"))
-        # also take the chance to calculate <theta'q'>
-        if use_q:
-            td = dd.theta - dd.theta.mean(dim=("x","y"))
-            qd = dd.q - dd.q.mean(dim=("x","y"))
-            dd_stat["tq_cov_res"] = xr.cov(td, qd, dim=("time","x","y"))
-    else:
-        dd_stat["u_var_rot"] = u_rot.var(dim=("time", "x", "y"))
-        dd_stat["v_var_rot"] = v_rot.var(dim=("time", "x", "y"))
-        # also take the chance to calculate <theta'q'>
-        if use_q:
-            dd_stat["tq_cov_res"] = xr.cov(dd.theta, dd.q, dim=("time","x","y"))
+    uvar_rot = u_rot - u_rot.mean(dim=("x","y"))
+    dd_stat["u_var_rot"] = uvar_rot.var(dim=("time","x","y"))
+    vvar_rot = v_rot - v_rot.mean(dim=("x","y"))
+    dd_stat["v_var_rot"] = vvar_rot.var(dim=("time","x","y"))
+    # calculate <theta'q'>
+    td = dd.theta - dd.theta.mean(dim=("x","y"))
+    qd = dd.q - dd.q.mean(dim=("x","y"))
+    dd_stat["tq_cov_res"] = xr.cov(td, qd, dim=("time","x","y"))
     # --------------------------------
     # Add attributes
     # --------------------------------
-    # copy from dd
-    dd_stat.attrs = dd.attrs
+    # grid spacing
     dd_stat.attrs["delta"] = (dd.dx * dd.dy * dd.dz) ** (1./3.)
     # calculate number of hours in average based on timesteps array
-    dd_stat.attrs["tavg"] = delta_t * (t1 - t0) / 3600.
+    dd_stat.attrs["tavg"] = times[-1] / 3600.
     # --------------------------------
     # Save output file
     # --------------------------------
-    if rotate:
-        fsave = f"{dnc}mean_stats_xyt_{tavg}_rot.nc"
+    # determine tavg string to use in save file, e.g., "5-6h"
+    # TODO: determine handling for varying dt e.g. after interpolation
+    t_final_s = (params["jt_final"] - params["jt_total_init"]) * params["dt"]
+    t_final_h = t_final_s / 3600.
+    t_start_h = t_final_h - (nf * params["nwrite"] * params["dt"] / 3600.)
+    # check if t_start_h and t_final_h are round numbers
+    if (t_start_h % 1.0 == 0.0):
+        ts_s = str(int(t_start_h)) # use integer
     else:
-        fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
+        ts_s = f"{t_start_h:.1f}"  # convert to 1 decimal place float
+    if (t_final_h % 1.0 == 0.0):
+        tf_s = str(int(t_final_h)) # use integer
+    else:
+        tf_s = f"{t_final_h:.1f}"  # convert to 1 decimal place float
+    fsave = f"{dnc}mean_stats_xyt_{ts_s}-{tf_s}h.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         dd_stat.to_netcdf(fsave, mode="w")
