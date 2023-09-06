@@ -194,7 +194,7 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False):
     params["simlabel"] = params["path"].split(os.sep)[-1]
     # determine range of files from info in params
     tf = params["jt_final"]
-    nf = int(nhr / params["dt"]) // params["twrite"]
+    nf = int(nhr / params["dt"]) // params["nwrite"]
     t0 = tf - nf
     timesteps = np.arange(t0, tf+1, params["twrite"], dtype=np.int32)
     print(f"Processing {nhr} hours = {nf} timesteps from t0={t0} to tf={tf}")
