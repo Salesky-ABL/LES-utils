@@ -233,6 +233,12 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
         print(f"Begin calculating stats for final {nhr} hours...")
         calc_stats(f_use=f_all, **params)
 
+    # run nc_rotate()
+    if rotate:
+        print("Begin rotating fields and saving output...")
+        nc_rotate(dnc, t0, tf, params["nwrite"])
+
+    print(f"Finished processing simulation {params['simlabel']}!")
     return
 # ---------------------------------------------
 def calc_stats(f_use=None, nhr=None, **params):
