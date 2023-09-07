@@ -5,58 +5,26 @@
 # Created: 31 March 2023
 # Purpose: process output from LES using functions from LESutils
 # for use with process.py
+# Updated: 6 September 2023
+# Use updated process_raw_sim function that uses new LES output so not
+# necessary to hardcode parameters here. Focus primarily on: out2netcdf,
+# calc_stats, nc_rotate, and (soon) timeseries2netcdf
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/cr0.50_u08_192/output/"
-# name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/cr0.50_u08_192/output/netcdf/"
-# simulation parameters
-# first timestep to load
-t0: 1080000
-# last timestep to load
-t1: 1260000
-# number of timesteps between files to load
-dt: 1000
-# dimensional timestep
-delta_t: 0.02
-# simulation resolution
-res: [192, 192, 192]
-# simulation domain size in m
-# dim: [12000, 12000, 2000]
-dim: [800, 800, 400]
-# dimensional scales for [u, theta, q]
-scales: [0.4, 300, 1000]
-# use output dissipation files
-use_dissip: True
-# use moisture fields
-use_q: False
-# simulation label
-simlab: "cr0.50_u08_192"
-# averaging period
-tavg: "9-10h"
-# detrend for calc_stats
-detrend: True
-# delete raw .out files
-del_raw: False
-# timeseries specific flags
-# number of hours to load
+d0: "/home/bgreene/simulations/CBL/"
+# log file name
+flog: "sims.yaml"
+# list of simulation names
+simlist: ["u15_tw02_qw01_dry", "u15_tw02_qw01_dry2",
+          "u15_tw02_qw01_moist", "u15_tw02_qw01_moist2"]
+          # "u12_tw24_qw10_moist", "u12_tw24_qw10_moist2", 
+# number of hours from end to process
 nhr: 1
-# final timestep to count backwards from
-tf: 720000
-# flag for SBL
-SBL: True
-# name of stats file to load, if applicable
-fstats: "mean_stats_xyt_9-10h_rot.nc"
-# use rotated files, if applicable
-use_rot: True
-# flags for running functions
-sim2nc: False
-calcstats: False
-statslong: False
-ts2nc: False
-ncrot: True
-# flags for running spec functions
-ac1d: False
-ac2d: False
-spec: False
-AM: False
+# delete raw output files?
+del_raw: True
+# overwrite old files if they exist?
+overwrite: False
+# compute stats?
+cstats: True
+# rotate coordinates?
+rotate: False

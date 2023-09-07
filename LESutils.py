@@ -189,6 +189,7 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
     rotate: boolean, call nc_rot on the same files as out2netcdf.
     -Output-
     single netcdf file for each timestep in the range nhr.
+    if cstats, also return filename created
     """
     # import yaml file
     with open(dout+"params.yaml") as fp:
@@ -197,7 +198,7 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
     params["simlabel"] = params["path"].split(os.sep)[-2]
     # determine range of files from info in params
     tf = params["jt_final"]
-    nt = int(nhr*3600. / params["dt"])
+    nt = int(nhr * 3600. / params["dt"])
     t0 = tf - nt
     timesteps = np.arange(t0, tf+1, params["nwrite"], dtype=np.int32)
     nf = len(timesteps)
@@ -231,7 +232,8 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
     # run calc_stats()
     if cstats:
         print(f"Begin calculating stats for final {nhr} hours...")
-        calc_stats(f_use=f_all, **params)
+        params["return_fstats"] = True
+        fstats = calc_stats(f_use=f_all, **params)
 
     # run nc_rotate()
     if rotate:
@@ -239,6 +241,9 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
         nc_rotate(dnc, t0, tf, params["nwrite"])
 
     print(f"Finished processing simulation {params['simlabel']}!")
+    if cstats:
+        return fstats
+    
     return
 # ---------------------------------------------
 def calc_stats(f_use=None, nhr=None, **params):
@@ -266,8 +271,8 @@ def calc_stats(f_use=None, nhr=None, **params):
     elif nhr is not None:
         # determine range of files from info in params
         tf = params["jt_final"]
-        nf = int(nhr / params["dt"]) // params["nwrite"]
-        t0 = tf - nf
+        nt = int(nhr * 3600. / params["dt"])
+        t0 = tf - nt
         timesteps = np.arange(t0, tf+1, params["nwrite"], dtype=np.int32)
         # determine files to read from timesteps
         fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
@@ -351,7 +356,7 @@ def calc_stats(f_use=None, nhr=None, **params):
     # TODO: determine handling for varying dt e.g. after interpolation
     t_final_s = (params["jt_final"] - params["jt_total_init"]) * params["dt"]
     t_final_h = t_final_s / 3600.
-    t_start_h = t_final_h - (nf * params["nwrite"] * params["dt"] / 3600.)
+    t_start_h = t_final_h - ((nf-1) * params["nwrite"] * params["dt"] / 3600.)
     # check if t_start_h and t_final_h are round numbers
     if (t_start_h % 1.0 == 0.0):
         ts_s = str(int(t_start_h)) # use integer
@@ -366,6 +371,11 @@ def calc_stats(f_use=None, nhr=None, **params):
     with ProgressBar():
         dd_stat.to_netcdf(fsave, mode="w")
     print("Finished!")
+    # check if "return_fstats" is in params to return filename
+    if "return_fstats" in params.keys():
+        if params["return_fstats"]:
+            return fsave.split(os.sep)[-1]
+
     return
 # ---------------------------------------------
 def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg, rotate):
@@ -545,7 +555,7 @@ def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg, rotate):
     print("Finished!")
     return
 # ---------------------------------------------
-def load_stats(fstats, SBL=False, display=False):
+def load_stats(fstats):
     """Reading function for average statistics files created from calc_stats()
     Load netcdf files using xarray and calculate numerous relevant parameters
     :param str fstats: absolute path to netcdf file for reading
@@ -559,7 +569,7 @@ def load_stats(fstats, SBL=False, display=False):
     # calculate ustar and h
     dd["ustar"] = ((dd.uw_cov_tot**2.) + (dd.vw_cov_tot**2.)) ** 0.25
     dd["ustar2"] = dd.ustar ** 2.
-    if SBL:
+    if dd.lbc == 0:
         dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
     else:
         # CBL
@@ -588,7 +598,7 @@ def load_stats(fstats, SBL=False, display=False):
     delta_z = dd.z.sel(z=dd.h, method="nearest") - dd.z[0]
     dd["dT_dz"] = delta_T / delta_z
     # calculate eddy turnover time TL
-    if SBL:
+    if dd.lbc == 0:
         # use ustar
         dd["TL"] = dd.h / dd.ustar0
     else:
@@ -618,7 +628,7 @@ def load_stats(fstats, SBL=False, display=False):
     dd["phih"] = (kz/dd.tstar) * dd.theta_mean.differentiate("z", 2)
     # MOST stability parameter z/L
     dd["zL"] = dd.z / dd.L
-    if SBL:
+    if dd.lbc == 0:
         # calculate TKE-based sbl depth
         dd["he"] = dd.z.where(dd.e <= 0.05*dd.e[0], drop=True)[0]
         # calculate h/L as global stability parameter
@@ -661,24 +671,10 @@ def load_stats(fstats, SBL=False, display=False):
         dd["LL"] = -(dd.ustar**3.) * dd.theta_mean / (0.4 * 9.81 * dd.tw_cov_tot)
         # calculate level of LLJ: zj
         dd["zj"] = dd.z.isel(z=dd.uh.argmax())
-    # print table statistics
-    if display:
-        print(f"---{dd.stability}---")
-        print(f"u*: {dd.ustar0.values:4.3f} m/s")
-        print(f"theta*: {dd.tstar0.values:5.4f} K")
-        print(f"Q*: {1000*dd.tw_cov_tot.isel(z=0).values:4.3f} K m/s")
-        print(f"h: {dd.h.values:4.3f} m")
-        print(f"L: {dd.L.values:4.3f} m")
-        print(f"h/L: {(dd.h/dd.L).values:4.3f}")
-        # print(f"Rib: {dd.Rib.values:4.3f}")
-        print(f"zj/h: {(dd.z.isel(z=dd.uh.argmax())/dd.h).values:4.3f}")
-        print(f"dT/dz: {1000*dd.dT_dz.values:4.1f} K/km")
-        print(f"TL: {dd.TL.values:4.1f} s")
-        print(f"nTL: {dd.nTL.values:4.1f}")
 
     return dd
 # ---------------------------------------------
-def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None, rotate=False):
+def load_full(dnc, t0, t1, dt, delta_t, stats=None, rotate=False):
     """Reading function for multiple instantaneous volumetric netcdf files
     Load netcdf files using xarray
     :param str dnc: abs path directory for location of netcdf files
@@ -714,7 +710,7 @@ def load_full(dnc, t0, t1, dt, delta_t, SBL=False, stats=None, rotate=False):
     # stats file
     if stats is not None:
         # load stats file
-        s = load_stats(dnc+stats, SBL=SBL)
+        s = load_stats(dnc+stats)
         # calculate rotated u, v based on xy mean at each timestep
         uxy = dd.u.mean(dim=("x","y"))
         vxy = dd.v.mean(dim=("x","y"))

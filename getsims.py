@@ -14,22 +14,22 @@ import xarray as xr
 from glob import glob
 from LESutils import load_stats
 
-def update_log(dnc, fstats, dlog, flog, SBL=False):
+def update_log(dnc, fstats, dlog, flog):
     """Purpose: add new simulation to log file, sims.yaml
     -Inputs-
     dnc: string, directory path to simulation netcdf files
     fstats: string, stats file name passed to load_stats
     dlog: string, name of log file directory
     flog: string, name of log file (YAML)
-    SBL: boolean, flag passed to load_stats (TODO: remove need for this)
     -Outputs-
-    none; updates sims.txt
+    none; updates sims.yaml
     """
     # define some constants
     Lv = 2.5e6 # J / kg
     cp = 1004.  # J / kg K
     # load stats file
-    s = load_stats(dnc+fstats, SBL=SBL)
+    s = load_stats(dnc+fstats)
+    print(f"Updating log for simulation: {s.simlabel}")
     # calculate important parameters for saving to log file
     # -zi/L
     ziL = -1 * (s.h / s.L).values
@@ -71,7 +71,7 @@ def update_log(dnc, fstats, dlog, flog, SBL=False):
         # create empty dictionary named oldlog
         oldlog = {}
     # add newlog to oldlog under simulation label s.label
-    oldlog[s.label] = newlog
+    oldlog[s.simlabel] = newlog
     # save out updated oldlog
     with open(dlog+flog, "w") as fw:
         yaml.dump(oldlog, fw)
