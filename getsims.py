@@ -10,8 +10,6 @@
 import os
 import yaml
 import numpy as np
-import xarray as xr
-from glob import glob
 from LESutils import load_stats
 
 def update_log(dnc, fstats, dlog, flog):
@@ -176,3 +174,32 @@ def getsims(simdir, flog, ziL_in, phi_wq_in, Ef_in):
     # return Ef_match as final list of sims matching combinations of input
     print(f"Total matches found: {len(Ef_match)}")
     return Ef_match
+# --------------------------------
+def remove_sim(dlog, flog, sim, rmdir=False):
+    """Purpose: remove a simulation and its information from the log file
+    -Inputs-
+    simdir: string, base directory where simulations and log file are saved
+    flog: string, name of log file to load
+    sim: string, name of simulation (usually the same as the directory it is in)
+    rmdir: boolean, delete whole directory if desired
+    -Outputs-
+    Updated log file.
+    """
+     # first load yaml log file
+    print(f"Reading file: {dlog}{flog}")
+    with open(dlog+flog) as f:
+        log = yaml.safe_load(f)
+    # pop off the desired sim
+    print("Removing sim:", sim)
+    _ = log.pop(sim, None)
+    # save out updated oldlog
+    print("Saving updated log")
+    with open(dlog+flog, "w") as fw:
+        yaml.dump(log, fw)
+
+    # delete sim dir if desired
+    if rmdir:
+        print("Deleting sim folder and data")
+        os.system(f"rm -rf {dlog}{sim}/")
+
+    return
