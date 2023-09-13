@@ -14,6 +14,7 @@ import xrft
 import xarray as xr
 import numpy as np
 from numba import njit
+from glob import glob
 from dask.diagnostics import ProgressBar
 from scipy.interpolate import RegularGridInterpolator
 # --------------------------------
@@ -174,8 +175,8 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
 
     return
 # ---------------------------------------------
-def process_raw_sim(dout, nhr, del_raw, overwrite=False, 
-                    cstats=True, rotate=False):
+def process_raw_sim(dout, nhr, del_raw, overwrite=False, cstats=True, 
+                    rotate=False, del_remaining=False):
     """Use information from dout/param.yaml file to dynamically process raw 
     output files with out2netcdf function for a desired time period of files.
     Optional additional processing: calc_stats(), nc_rot().
@@ -187,6 +188,7 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
     overwrite: boolean, flag to overwrite output file in case it already exists.
     cstats: boolean, call calc_stats on the range determined for out2netcdf.
     rotate: boolean, call nc_rot on the same files as out2netcdf.
+    del_remaining: boolean, delete all remaining raw files (not timeseries).
     -Output-
     single netcdf file for each timestep in the range nhr.
     if cstats, also return filename created
@@ -234,17 +236,31 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False,
         print(f"Begin calculating stats for final {nhr} hours...")
         params["return_fstats"] = True
         fstats = calc_stats(f_use=f_all, **params)
+    else:
+        fstats = None
 
     # run nc_rotate()
     if rotate:
         print("Begin rotating fields and saving output...")
         nc_rotate(dnc, t0, tf, params["nwrite"])
 
+    # delete all remaining raw files to save space
+    if del_remaining:
+        print("Delete remaining raw files to save storage space...")
+        # list of variables to delete
+        var_del = ["u", "v", "w", "theta", "q", 
+                   "txz", "tyz", "q3", "wq_sgs", "dissip"]
+        # loop over each variable and cleanup
+        for v in var_del:
+            falltemp = glob(f"{dout}{v}_*.out")
+            # ignore timeseries files
+            # TODO: process timeseries files before this point
+            fallv = [ff for ff in falltemp if "timeseries" not in ff]
+            for ff in fallv:
+                os.system(f"rm {ff}")
+
     print(f"Finished processing simulation {params['simlabel']}!")
-    if cstats:
-        return fstats
-    
-    return
+    return fstats
 # ---------------------------------------------
 def calc_stats(f_use=None, nhr=None, **params):
     """Read multiple output netcdf files created by out2netcdf() to calculate
