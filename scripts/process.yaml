@@ -15,9 +15,7 @@ d0: "/home/bgreene/simulations/CBL/"
 # log file name
 flog: "sims.yaml"
 # list of simulation names
-simlist: ["u15_tw02_qw01_dry", "u15_tw02_qw01_dry2",
-          "u15_tw02_qw01_moist", "u15_tw02_qw01_moist2"]
-          # "u12_tw24_qw10_moist", "u12_tw24_qw10_moist2", 
+simlist: [u15_tw02_qw01_dry, u15_tw02_qw01_dry2, u15_tw02_qw01_moist, u15_tw02_qw01_moist2] 
 # number of hours from end to process
 nhr: 1
 # delete raw output files?
@@ -25,6 +23,8 @@ del_raw: True
 # overwrite old files if they exist?
 overwrite: False
 # compute stats?
-cstats: True
+cstats: False
 # rotate coordinates?
 rotate: False
+# delete remaining raw files?
+del_remaining: True

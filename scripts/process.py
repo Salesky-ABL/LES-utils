@@ -30,9 +30,12 @@ for sim in config["simlist"]:
                              del_raw=config["del_raw"], 
                              overwrite=config["overwrite"], 
                              cstats=config["cstats"], 
-                             rotate=config["rotate"])
+                             rotate=config["rotate"],
+                             del_remaining=config["del_remaining"])
     # update sims.yaml with resulting stats file
-    update_log(dout+"netcdf/", fstats, config["d0"], "sims.yaml")
+    if fstats is not None:
+        update_log(dout+"netcdf/", fstats, config["d0"], "sims.yaml")
+        
     print(f"Finished processing simulation: {sim}")
 
 print("process.py complete!")
