@@ -76,72 +76,123 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
     # Read binary and save new files
     # --------------------------------
     # load and apply scales
-    f1 = f"{dout}u_{timestep:07d}.out"
-    u_in = read_f90_bin(f1,nx,ny,nz,8) * u_scale
-    f2 = f"{dout}v_{timestep:07d}.out"
-    v_in = read_f90_bin(f2,nx,ny,nz,8) * u_scale
-    f3 = f"{dout}w_{timestep:07d}.out"
-    w_in = read_f90_bin(f3,nx,ny,nz,8) * u_scale
-    f4 = f"{dout}theta_{timestep:07d}.out"
-    theta_in = read_f90_bin(f4,nx,ny,nz,8) * theta_scale
-    f5 = f"{dout}txz_{timestep:07d}.out"
-    txz_in = read_f90_bin(f5,nx,ny,nz,8) * u_scale * u_scale
-    f6 = f"{dout}tyz_{timestep:07d}.out"
-    tyz_in = read_f90_bin(f6,nx,ny,nz,8) * u_scale * u_scale
-    f7 = f"{dout}q3_{timestep:07d}.out"
-    q3_in = read_f90_bin(f7,nx,ny,nz,8) * u_scale * theta_scale
-    f8 = f"{dout}q_{timestep:07d}.out"
-    q_in = read_f90_bin(f8,nx,ny,nz,8) * q_scale
-    f9 = f"{dout}wq_sgs_{timestep:07d}.out"
-    wq_sgs_in = read_f90_bin(f9,nx,ny,nz,8) * u_scale * q_scale    
-    fd = f"{dout}dissip_{timestep:07d}.out"
-    diss_in = read_f90_bin(fd,nx,ny,nz,8) * u_scale * u_scale * u_scale / Lz
-    # list of all out files for cleanup later
-    fout_all = [f1, f2, f3, f4, f5, f6, f7, f8, f9, fd]
-    # interpolate w, txz, tyz, q3, wq_sgs, dissip to u grid
+    # u
+    f01 = f"{dout}u_{timestep:07d}.out"
+    u_in = read_f90_bin(f01,nx,ny,nz,8) * u_scale
+    # v
+    f02 = f"{dout}v_{timestep:07d}.out"
+    v_in = read_f90_bin(f02,nx,ny,nz,8) * u_scale
+    # w
+    f03 = f"{dout}w_{timestep:07d}.out"
+    w_in = read_f90_bin(f03,nx,ny,nz,8) * u_scale
+    # theta
+    f04 = f"{dout}theta_{timestep:07d}.out"
+    theta_in = read_f90_bin(f04,nx,ny,nz,8) * theta_scale
+    # q
+    f05 = f"{dout}q_{timestep:07d}.out"
+    q_in = read_f90_bin(f05,nx,ny,nz,8) * q_scale
+    # p
+    f06 = f"{dout}p_{timestep:07d}.out"
+    p_in = read_f90_bin(f06,nx,ny,nz,8) # unsure how to dim
+    # dissipation
+    f07 = f"{dout}dissip_{timestep:07d}.out"
+    diss_in = read_f90_bin(f07,nx,ny,nz,8) * u_scale * u_scale * u_scale / Lz
+    # 6 tau_ij terms
+    f08 = f"{dout}txx_{timestep:07d}.out"
+    txx_in = read_f90_bin(f08,nx,ny,nz,8) * u_scale * u_scale
+    f09 = f"{dout}txy_{timestep:07d}.out"
+    txy_in = read_f90_bin(f09,nx,ny,nz,8) * u_scale * u_scale
+    f10 = f"{dout}txz_{timestep:07d}.out"
+    txz_in = read_f90_bin(f10,nx,ny,nz,8) * u_scale * u_scale
+    f11 = f"{dout}tyy_{timestep:07d}.out"
+    tyy_in = read_f90_bin(f11,nx,ny,nz,8) * u_scale * u_scale
+    f12 = f"{dout}tyz_{timestep:07d}.out"
+    tyz_in = read_f90_bin(f12,nx,ny,nz,8) * u_scale * u_scale
+    f13 = f"{dout}tzz_{timestep:07d}.out"
+    tzz_in = read_f90_bin(f13,nx,ny,nz,8) * u_scale * u_scale
+    # tw_sgs
+    f14 = f"{dout}sgs_t3_{timestep:07d}.out"
+    tw_sgs_in = read_f90_bin(f14,nx,ny,nz,8) * u_scale * theta_scale
+    # qw_sgs
+    f15 = f"{dout}sgs_q3_{timestep:07d}.out"
+    qw_sgs_in = read_f90_bin(f15,nx,ny,nz,8) * u_scale * q_scale  
+    # e_sgs
+    f16 = f"{dout}e_sgs_{timestep:07d}.out"
+    e_sgs_in = read_f90_bin(f16,nx,ny,nz,8) * u_scale * u_scale
+
+        # list of all out files for cleanup later
+    fout_all = [f01, f02, f03, f04, f05, f06, f07, f08, f09,
+                f10, f11, f12, f13, f14, f15, f16]
+    # interpolate w, sgs terms (incl. e), and dissip to u grid
     # create DataArrays
     w_da = xr.DataArray(w_in, dims=("x", "y", "z"), 
                         coords=dict(x=x, y=y, z=zw))
+    txx_da = xr.DataArray(txx_in, dims=("x", "y", "z"), 
+                          coords=dict(x=x, y=y, z=zw))
+    txy_da = xr.DataArray(txy_in, dims=("x", "y", "z"), 
+                          coords=dict(x=x, y=y, z=zw))
     txz_da = xr.DataArray(txz_in, dims=("x", "y", "z"), 
+                          coords=dict(x=x, y=y, z=zw))
+    tyy_da = xr.DataArray(tyy_in, dims=("x", "y", "z"), 
                           coords=dict(x=x, y=y, z=zw))
     tyz_da = xr.DataArray(tyz_in, dims=("x", "y", "z"), 
                           coords=dict(x=x, y=y, z=zw))
-    q3_da = xr.DataArray(q3_in, dims=("x", "y", "z"), 
-                         coords=dict(x=x, y=y, z=zw))
+    tzz_da = xr.DataArray(tzz_in, dims=("x", "y", "z"), 
+                          coords=dict(x=x, y=y, z=zw))
+    tw_sgs_da = xr.DataArray(tw_sgs_in, dims=("x", "y", "z"), 
+                             coords=dict(x=x, y=y, z=zw))
+    qw_sgs_da = xr.DataArray(qw_sgs_in, dims=("x", "y", "z"), 
+                             coords=dict(x=x, y=y, z=zw))
     diss_da = xr.DataArray(diss_in, dims=("x", "y", "z"), 
                            coords=dict(x=x, y=y, z=zw))
-    wq_sgs_da = xr.DataArray(wq_sgs_in, dims=("x", "y", "z"), 
-                             coords=dict(x=x, y=y, z=zw))
+    e_sgs_da = xr.DataArray(e_sgs_in, dims=("x", "y", "z"), 
+                            coords=dict(x=x, y=y, z=zw))
     # perform interpolation
     w_interp = w_da.interp(z=zu, method="linear", 
                            kwargs={"fill_value": "extrapolate"})
+    txx_interp = txx_da.interp(z=zu, method="linear", 
+                               kwargs={"fill_value": "extrapolate"})
+    txy_interp = txy_da.interp(z=zu, method="linear", 
+                               kwargs={"fill_value": "extrapolate"})
     txz_interp = txz_da.interp(z=zu, method="linear", 
+                               kwargs={"fill_value": "extrapolate"})
+    tyy_interp = tyy_da.interp(z=zu, method="linear", 
                                kwargs={"fill_value": "extrapolate"})
     tyz_interp = tyz_da.interp(z=zu, method="linear", 
                                kwargs={"fill_value": "extrapolate"})
-    q3_interp = q3_da.interp(z=zu, method="linear", 
-                             kwargs={"fill_value": "extrapolate"})
+    tzz_interp = tzz_da.interp(z=zu, method="linear", 
+                               kwargs={"fill_value": "extrapolate"})
+    tw_sgs_interp = tw_sgs_da.interp(z=zu, method="linear", 
+                                     kwargs={"fill_value": "extrapolate"})
+    qw_sgs_interp = qw_sgs_da.interp(z=zu, method="linear", 
+                                     kwargs={"fill_value": "extrapolate"})
     diss_interp = diss_da.interp(z=zu, method="linear", 
                                  kwargs={"fill_value": "extrapolate"})
-    wq_sgs_interp = wq_sgs_da.interp(z=zu, method="linear", 
-                                     kwargs={"fill_value": "extrapolate"})
+    e_sgs_interp = e_sgs_da.interp(z=zu, method="linear", 
+                                   kwargs={"fill_value": "extrapolate"})
     # construct dictionary of data to save -- u-node variables only!
     data_save = {
                  "u": (["x","y","z"], u_in),
                  "v": (["x","y","z"], v_in),
                  "theta": (["x","y","z"], theta_in),
-                 "q": (["x","y","z"], q_in)
+                 "q": (["x","y","z"], q_in),
+                 "p": (["x","y","z"], p_in)
                 }
 
     # construct dataset from these variables
     ds = xr.Dataset(data_save, coords=dict(x=x, y=y, z=zu), attrs=params)
     # now assign interpolated arrays that were on w-nodes
     ds["w"] = w_interp
+    ds["txx"] = txx_interp
+    ds["txy"] = txy_interp
     ds["txz"] = txz_interp
+    ds["tyy"] = tyy_interp
     ds["tyz"] = tyz_interp
-    ds["q3"] = q3_interp
-    ds["wq_sgs"] = wq_sgs_interp
+    ds["tzz"] = tzz_interp
+    ds["tw_sgs"] = tw_sgs_interp
+    ds["qw_sgs"] = qw_sgs_interp
     ds["dissip"] = diss_interp
+    ds["e_sgs"] = e_sgs_interp
     # hardcode dictionary of units to use by default
     units = {
             "u": "m/s",
@@ -149,11 +200,17 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
             "w": "m/s",
             "theta": "K",
             "q": "g/kg",
+            "p": "n/a",
+            "txx": "m^2/s^2",
+            "txy": "m^2/s^2",
             "txz": "m^2/s^2",
+            "tyy": "m^2/s^2",
             "tyz": "m^2/s^2",
-            "q3": "K m/s",
-            "wq_sgs": "m/s g/kg",
+            "tzz": "m^2/s^2",
+            "tw_sgs": "K m/s",
+            "qw_sgs": "m/s g/kg",
             "dissip": "m^2/s^3",
+            "e_sgs": "m^2/s^2",
             "x": "m",
             "y": "m",
             "z": "m"
