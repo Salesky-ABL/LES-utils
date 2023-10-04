@@ -367,25 +367,28 @@ def calc_stats(f_use=None, nhr=None, **params):
     # create empty dataset that will hold everything
     dd_stat = xr.Dataset(data_vars=None, coords=dict(z=dd.z), attrs=dd.attrs)
     # list of base variables
-    base = ["u", "v", "w", "theta", "q", "dissip"]
+    base = ["u", "v", "w", "theta", "q", "dissip", "p"]
     # use for looping over vars in case dissip not used
     base1 = ["u", "v", "w", "theta", "q", "thetav"]
+    # list of remaining variables to average over
+    base2 = ["txx", "txy", "txz", "tyy", "tyz", "tzz", 
+             "tw_sgs", "qw_sgs", "e_sgs"]
     # calculate means
-    for s in base:
+    for s in base+base2:
         dd_stat[f"{s}_mean"] = dd[s].mean(dim=("time", "x", "y"))
     # calculate covars
     # u'w'
     dd_stat["uw_cov_res"] = xr.cov(dd.u, dd.w, dim=("time", "x", "y"))
-    dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd.txz.mean(dim=("time","x","y"))
+    dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd_stat.txz_mean
     # v'w'
     dd_stat["vw_cov_res"] = xr.cov(dd.v, dd.w, dim=("time", "x", "y"))
-    dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd.tyz.mean(dim=("time","x","y"))
+    dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd_stat.tyz_mean
     # theta'w'
     dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("time", "x", "y"))
-    dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd.q3.mean(dim=("time","x","y"))
+    dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
     # q'w'
     dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
-    dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd.wq_sgs.mean(dim=("time","x","y"))
+    dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
     # calculate thetav
     dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
     dd_stat["thetav_mean"] = dd.thetav.mean(dim=("time","x","y"))
