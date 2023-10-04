@@ -319,6 +319,112 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False, cstats=True,
     print(f"Finished processing simulation {params['simlabel']}!")
     return fstats
 # ---------------------------------------------
+def organize_output(dout, nrun):
+    """For simulations that are split into batches, loop over
+    runs and combine files into single directory. Volume files
+    have cumulative timesteps, but timeseries do not. Use
+    params.yaml files for reference.
+    -Input-
+    dout: string, absolute path to output files
+    nrun: integer, number of runXX folders to loop over
+    -Output-
+    none
+    """
+    # current workflow: nrun-1 folders, with run==nrun in dout
+    # lets create new directory to make looping easier
+    os.system(f"mkdir -p {dout}run{nrun:02d}/")
+    os.system(f"mv {dout}*.* {dout}run{nrun:02d}/")
+    # create a directory in dout to hold everything as we loop
+    dall = f"{dout}runall/"
+    os.system(f"mkdir -p {dall}")
+    vall_v = ["u", "v", "w", "theta", "q", "p", 
+              "txx", "txy", "txz", "tyy", "tyz", "tzz",
+              "tw_sgs", "qw_sgs", "e_sgs", "dissip"]
+    vall_t = ["u", "v", "w", "t", "q", "p", "tv",
+              "txx", "txy", "txz", "tyy", "tyz", "tzz",
+              "tw_sgs", "qw_sgs", "e_sgs", "dissip"]
+    # dictionary to keep track of which runs have timeseries, and how long
+    tslog = {}
+    # begin looping over runs
+    for r in range(1, nrun+1):
+        print(f"Begin run: {r}")
+        drun = f"{dout}run{r:02d}/"
+        # load yaml file
+        with open(drun+"params.yaml") as f:
+            params = yaml.safe_load(f)
+        # move files
+        for v in vall_v:
+            print(f"Moving volume files: {v}")
+            fmove = glob(f"{drun}{v}_*.out")
+            # move volume files, ignore timeseries files
+            fvol = [ff for ff in fmove if "timeseries" not in ff]
+            for ff in fvol:
+                os.system(f"mv {ff} {dall}")
+        # move timeseries files
+        # first, check if there are any in this folder
+        if len(glob(f"{drun}*timeseries*.out")) > 0:
+            for v in vall_t:
+                print(f"Moving timeseries files...")
+                # combine all ts file levels into one
+                # grab dimensions from params
+                nz = params["nz"]
+                nz_mpi = params["nz_mpi"]
+                nmpi = nz // nz_mpi
+                # now loop through each file (one for each mpi process)
+                # there are nz_mpi columns in each file!
+                # initialize jz counter index for first nz_mpi columns
+                jz = np.arange(1, nz_mpi+1, dtype=np.int32)
+                # initialze range counter for which columns to use
+                cols = range(1, nz_mpi+1)
+                # create numpy array to hold all levels
+                # get more from params
+                jt_start = params["jt_total_init"]
+                jt_final = params["jt_final"]
+                nt = params["nsteps"]
+                # add nt to tslog
+                tslog[f"{r:02d}"] = nt
+                # initialize
+                tsv = np.zeros((nt, nz+1), dtype=np.float64)
+                # first column is timestamp
+                tsv[:,0] = np.arange(jt_start, jt_final+1, dtype=np.float64)
+                # add 
+                for jmpi in range(nmpi):
+                    fts = f"{drun}{v}_timeseries_c{jmpi:03d}.out"
+                    # load files and store in tsv
+                    tsv[:,jz] = np.loadtxt(fts, usecols=cols)
+                    # increment jz!
+                    jz += nz_mpi
+                # save tsv as new .npz file in dall
+                fts_new = f"{dall}{v}_timeseries_run{r:02d}.npz"
+                print(f"Saving file: {fts_new}")
+                np.savez(fts_new, tsv)
+    # outside all loops
+    # combine timeseries files into one per variable
+    print("Cleanup timeseries files...")
+    nt_all = sum(tslog.values())
+    # loop over variables
+    for v in vall_t:
+        # initialize big array to hold all runs
+        # nz should still be the valid value
+        tsfull = np.zeros((nt_all, nz+1), dtype=np.float64)
+        # initialize counter
+        tcount = 0
+        # loop over runs
+        for r, nt in tslog.items():
+            # load timeseries npz file
+            fts_new = f"{dall}{v}_timeseries_run{r}.npz"
+            # store in tsfull
+            tsfull[tcount:tcount+nt,:] = np.load(fts_new)["arr_0"]
+            # increment tcount
+            tcount += nt
+            # delete fts_new 
+            os.system(f"rm {fts_new}")
+        # save tsfull as new file
+        fts_all = f"{dall}{v}_timeseries.npz"
+        print(f"Saving file: {fts_all}")
+        np.savez(fts_all, tsfull)
+    return
+# ---------------------------------------------
 def calc_stats(f_use=None, nhr=None, **params):
     """Read multiple output netcdf files created by out2netcdf() to calculate
     averages in x, y, t and save as new netcdf file. Directly input the names
