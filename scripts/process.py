@@ -16,7 +16,7 @@ from LESutils import process_raw_sim
 from getsims import update_log
 
 # load yaml file
-fyaml = "/home/bgreene/LES-utils/scripts/process.yaml"
+fyaml = "/users/bgreene/LES-utils/scripts/process.yaml"
 with open(fyaml) as f:
     config = yaml.safe_load(f)
 
@@ -27,6 +27,7 @@ for sim in config["simlist"]:
     dout = config["d0"] + sim + "/output/"
     # run process
     fstats = process_raw_sim(dout=dout, nhr=config["nhr"], 
+                             nhr_s=config["nhr_s"],
                              del_raw=config["del_raw"], 
                              overwrite=config["overwrite"], 
                              cstats=config["cstats"], 

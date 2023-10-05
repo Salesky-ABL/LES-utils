@@ -232,7 +232,7 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
 
     return
 # ---------------------------------------------
-def process_raw_sim(dout, nhr, del_raw, overwrite=False, cstats=True, 
+def process_raw_sim(dout, nhr, nhr_s, del_raw, overwrite=False, cstats=True, 
                     rotate=False, del_remaining=False):
     """Use information from dout/param.yaml file to dynamically process raw 
     output files with out2netcdf function for a desired time period of files.
@@ -241,6 +241,7 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False, cstats=True,
     dout: string, absolute path to output files
     nhr: float, number of physical hours to process. Will use information from\
         param file to dynamically select files.
+    nhr_s: string, label for outputting stats file matching nhr (e.g., 5-6h)
     del_raw: boolean, flag to pass to out2netcdf for cleaning up raw files
     overwrite: boolean, flag to overwrite output file in case it already exists.
     cstats: boolean, call calc_stats on the range determined for out2netcdf.
@@ -255,6 +256,8 @@ def process_raw_sim(dout, nhr, del_raw, overwrite=False, cstats=True,
         params = yaml.safe_load(fp)
     # add simulation label to params
     params["simlabel"] = params["path"].split(os.sep)[-2]
+    # add nhr_s to params
+    params["nhr_s"] = nhr_s
     # determine range of files from info in params
     tf = params["jt_final"]
     nt = int(nhr * 3600. / params["dt"])
@@ -339,10 +342,10 @@ def organize_output(dout, nrun):
     os.system(f"mkdir -p {dall}")
     vall_v = ["u", "v", "w", "theta", "q", "p", 
               "txx", "txy", "txz", "tyy", "tyz", "tzz",
-              "tw_sgs", "qw_sgs", "e_sgs", "dissip"]
+              "sgs_t3", "sgs_q3", "e_sgs", "dissip"]
     vall_t = ["u", "v", "w", "t", "q", "p", "tv",
               "txx", "txy", "txz", "tyy", "tyz", "tzz",
-              "tw_sgs", "qw_sgs", "e_sgs", "dissip"]
+              "sgs_t3", "sgs_q3", "e_sgs", "dissip"]
     # dictionary to keep track of which runs have timeseries, and how long
     tslog = {}
     # begin looping over runs
@@ -386,7 +389,7 @@ def organize_output(dout, nrun):
                 # initialize
                 tsv = np.zeros((nt, nz+1), dtype=np.float64)
                 # first column is timestamp
-                tsv[:,0] = np.arange(jt_start, jt_final+1, dtype=np.float64)
+                tsv[:,0] = np.arange(jt_start, jt_final, dtype=np.float64)
                 # add 
                 for jmpi in range(nmpi):
                     fts = f"{drun}{v}_timeseries_c{jmpi:03d}.out"
@@ -423,6 +426,21 @@ def organize_output(dout, nrun):
         fts_all = f"{dall}{v}_timeseries.npz"
         print(f"Saving file: {fts_all}")
         np.savez(fts_all, tsfull)
+    # move everything in dall up a dir into output/
+    print("Moving files into output/ and cleaning up remaining directories")
+    os.system(f"mv {dall}* {dout}")
+    # move params.yaml files and delete directories
+    for r in range(1, nrun+1):
+        drun = f"{dout}run{r:02d}/"
+        if r == nrun:
+            pnew = "params.yaml"
+        else:
+            pnew = "params{r:02d}.yaml"
+        os.system(f"mv {drun}params.yaml {dout}{pnew}")
+        print(f"Removing directory: {drun}")
+        os.system(f"rm -r {drun}")
+    
+    print("Finished cleaning up simulation output!")
     return
 # ---------------------------------------------
 def calc_stats(f_use=None, nhr=None, **params):
@@ -534,21 +552,7 @@ def calc_stats(f_use=None, nhr=None, **params):
     # --------------------------------
     # Save output file
     # --------------------------------
-    # determine tavg string to use in save file, e.g., "5-6h"
-    # TODO: determine handling for varying dt e.g. after interpolation
-    t_final_s = (params["jt_final"] - params["jt_total_init"]) * params["dt"]
-    t_final_h = t_final_s / 3600.
-    t_start_h = t_final_h - ((nf-1) * params["nwrite"] * params["dt"] / 3600.)
-    # check if t_start_h and t_final_h are round numbers
-    if (t_start_h % 1.0 == 0.0):
-        ts_s = str(int(t_start_h)) # use integer
-    else:
-        ts_s = f"{t_start_h:.1f}"  # convert to 1 decimal place float
-    if (t_final_h % 1.0 == 0.0):
-        tf_s = str(int(t_final_h)) # use integer
-    else:
-        tf_s = f"{t_final_h:.1f}"  # convert to 1 decimal place float
-    fsave = f"{dnc}mean_stats_xyt_{ts_s}-{tf_s}h.nc"
+    fsave = f"{dnc}mean_stats_xyt_{params['nhr_s']}.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         dd_stat.to_netcdf(fsave, mode="w")
