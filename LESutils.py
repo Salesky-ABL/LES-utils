@@ -120,7 +120,7 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
     f16 = f"{dout}e_sgs_{timestep:07d}.out"
     e_sgs_in = read_f90_bin(f16,nx,ny,nz,8) * u_scale * u_scale
 
-        # list of all out files for cleanup later
+    # list of all out files for cleanup later
     fout_all = [f01, f02, f03, f04, f05, f06, f07, f08, f09,
                 f10, f11, f12, f13, f14, f15, f16]
     # interpolate w, sgs terms (incl. e), and dissip to u grid
@@ -232,8 +232,9 @@ def out2netcdf(dout, timestep, del_raw=False, **params):
 
     return
 # ---------------------------------------------
-def process_raw_sim(dout, nhr, nhr_s, del_raw, overwrite=False, cstats=True, 
-                    rotate=False, del_remaining=False):
+def process_raw_sim(dout, nhr, nhr_s, del_raw, organize, nrun, 
+                    overwrite=False, cstats=True, rotate=False, 
+                    ts2nc=False, del_remaining=False):
     """Use information from dout/param.yaml file to dynamically process raw 
     output files with out2netcdf function for a desired time period of files.
     Optional additional processing: calc_stats(), nc_rot().
@@ -243,6 +244,8 @@ def process_raw_sim(dout, nhr, nhr_s, del_raw, overwrite=False, cstats=True,
         param file to dynamically select files.
     nhr_s: string, label for outputting stats file matching nhr (e.g., 5-6h)
     del_raw: boolean, flag to pass to out2netcdf for cleaning up raw files
+    organize: boolean, flag to call organize_output on batch job output
+    nrun: integer, number of independent job batches to pass to organize
     overwrite: boolean, flag to overwrite output file in case it already exists.
     cstats: boolean, call calc_stats on the range determined for out2netcdf.
     rotate: boolean, call nc_rot on the same files as out2netcdf.
@@ -269,6 +272,11 @@ def process_raw_sim(dout, nhr, nhr_s, del_raw, overwrite=False, cstats=True,
     dnc = f"{dout}netcdf/"
     if not os.path.exists(dnc):
         os.system(f"mkdir {dnc}")
+    # add dnc to params
+    params["dnc"] = dnc
+    # first need to organize sim output by calling organize_output()
+    if organize:
+        organize_output(dout, nrun)
 
     # loop over timesteps and call out2netcdf
     # store filenames created
@@ -304,20 +312,17 @@ def process_raw_sim(dout, nhr, nhr_s, del_raw, overwrite=False, cstats=True,
         print("Begin rotating fields and saving output...")
         nc_rotate(dnc, t0, tf, params["nwrite"])
 
+    # run timeseries2netcdf()
+    if ts2nc:
+        print("Begin processing timeseries data...")
+        timeseries2netcdf(dout, del_npz=del_raw, **params)
+
     # delete all remaining raw files to save space
     if del_remaining:
         print("Delete remaining raw files to save storage space...")
-        # list of variables to delete
-        var_del = ["u", "v", "w", "theta", "q", 
-                   "txz", "tyz", "q3", "wq_sgs", "dissip"]
-        # loop over each variable and cleanup
-        for v in var_del:
-            falltemp = glob(f"{dout}{v}_*.out")
-            # ignore timeseries files
-            # TODO: process timeseries files before this point
-            fallv = [ff for ff in falltemp if "timeseries" not in ff]
-            for ff in fallv:
-                os.system(f"rm {ff}")
+        # only files left should be .out
+        # timeseries files should have been converted to .npz already
+        os.system(f"rm {dout}*.out")
 
     print(f"Finished processing simulation {params['simlabel']}!")
     return fstats
@@ -453,14 +458,15 @@ def calc_stats(f_use=None, nhr=None, **params):
     nhr: float, number of hours worth of files to read if not None
     params: dictionary with relevant simulation information for processing
     -Output-
-    statistics file with format 'mean_stats_xyt_<t0>-<tf>h.nc'
+    statistics file with format 'mean_stats_xyt_<nhr_s>.nc'
     """
     # make sure params is not empty
     if len(params.keys()) < 1:
         print("No parameters provided. Returning without proceeding.")
         return
     # construct dnc
-    dnc = f"{params['path']}output/netcdf/"
+    # dnc = f"{params['path']}output/netcdf/"
+    dnc = params["dnc"]
 
     # option 1: f_use is not None
     if f_use is not None:
@@ -908,30 +914,22 @@ def load_full(dnc, t0, t1, dt, delta_t, stats=None, rotate=False):
     # just return dd if no stats
     return dd
 # ---------------------------------------------
-def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz, 
-                      nz_mpi, nhr, tf, simlabel, del_raw=False):
-    """Load raw timeseries data at each level and combine into single
-    netcdf file with dimensions (time, z)
-    :param str dout: absolute path to directory with LES output binary files
-    :param str dnc: absolute path to directory for saving output netCDF files
-    :param tuple<Quantity> scales: dimensional scales from LES code\
-        (uscale, Tscale, qscale)
-    :param bool use_q: flag to use specific humidity q
-    :param float delta_t: dimensional timestep in simulation (seconds)
-    :param int nz: resolution of simulation in vertical
-    :param float Lz: height of domain in m
-    :param int nz_mpi: number of vertical levels per MPI process
-    :param float nhr: number of hours to load, counting backwards from end
-    :param int tf: final timestep in file
-    :param str simlabel: unique identifier for batch of files
-    :param bool del_raw: automatically delete raw .out files from LES code\
-        to save space, default=False
+def timeseries2netcdf(dout, dnc, del_npz=False, **params):
+    """Load raw timeseries .npz files and process into single netcdf file with 
+    dimensions (time, z). To be used *after* organize_output().
+    -Input-
+    dout: string, directory where timeseries npz files are stored
+    dnc: new directory for saving combined netcdf file
+    del_npz: bool, delete raw npz files after combining to save space
+    params: dictionary with relevant sim information for processing
     """
     # grab relevent parameters
-    u_scale = scales[0]
-    theta_scale = scales[1]
-    if use_q:
-        q_scale = scales[2]
+    print(f"Processing simulation {params['simlabel']}")
+    u_scale = params["u_scale"]
+    theta_scale = params["T_scale"]
+    q_scale = params["q_scale"]
+    Lz = params["Lz"]
+    nz = params["nz"]
     dz = Lz/nz
     # define z array
     # u- and w-nodes are staggered
@@ -940,105 +938,130 @@ def timeseries2netcdf(dout, dnc, scales, use_q, delta_t, nz, Lz,
     # interpolate w, txz, tyz, q3 to u grid
     zw = np.linspace(0., Lz, nz)
     zu = np.linspace(dz/2., Lz+dz/2., nz)
-    # determine number of hours to process from tavg
-    nt = int(nhr*3600./delta_t)
-    istart = tf - nt
-    # define array of time in seconds
-    time = np.linspace(0., nhr*3600.-delta_t, nt, dtype=np.float64)
-    print(f"Loading {nt} timesteps = {nhr} hr for simulation {simlabel}")
-    # define DataArrays for u, v, w, theta, txz, tyz, q3
-    # shape(nt,nz)
-    # u, v, theta, q, thetav
-    u_ts, v_ts, theta_ts, q_ts, thetav_ts =\
-    (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
-                  dims=("t", "z"), coords=dict(t=time, z=zu)) for _ in range(5))
-    # w, txz, tyz, q3, wq_sgs
-    w_ts, txz_ts, tyz_ts, q3_ts, wq_sgs_ts =\
-    (xr.DataArray(np.zeros((nt, nz), dtype=np.float64),
-                  dims=("t", "z"), coords=dict(t=time, z=zw)) for _ in range(5))
-    fout_all = []
-    # compute number of MPI levels
-    nmpi = nz // nz_mpi
-    # now loop through each file (one for each mpi process)
-    # there are nz_mpi columns in each file!
-    # initialize jz counter index for first nz_mpi columns
-    jz = np.arange(nz_mpi, dtype=np.int32)
-    # initialze range counter for which columns to use
-    cols = range(1, nz_mpi+1)
-    for jmpi in range(nmpi):
-        print(f"Loading timeseries data, jz={jmpi}")
-        fu = f"{dout}u_timeseries_c{jmpi:03d}.out"
-        u_ts[:,jz] = np.loadtxt(fu, skiprows=istart, usecols=cols)
-        fv = f"{dout}v_timeseries_c{jmpi:03d}.out"
-        v_ts[:,jz] = np.loadtxt(fv, skiprows=istart, usecols=cols)
-        fw = f"{dout}w_timeseries_c{jmpi:03d}.out"
-        w_ts[:,jz] = np.loadtxt(fw, skiprows=istart, usecols=cols)
-        ftheta = f"{dout}t_timeseries_c{jmpi:03d}.out"
-        theta_ts[:,jz] = np.loadtxt(ftheta, skiprows=istart, usecols=cols)
-        ftxz = f"{dout}txz_timeseries_c{jmpi:03d}.out"
-        txz_ts[:,jz] = np.loadtxt(ftxz, skiprows=istart, usecols=cols)
-        ftyz = f"{dout}tyz_timeseries_c{jmpi:03d}.out"
-        tyz_ts[:,jz] = np.loadtxt(ftyz, skiprows=istart, usecols=cols)
-        fq3 = f"{dout}q3_timeseries_c{jmpi:03d}.out"
-        q3_ts[:,jz] = np.loadtxt(fq3, skiprows=istart, usecols=cols)
-        fout_all += [fu, fv, fw, ftheta, ftxz, ftyz, fq3]
-        # load q
-        if use_q:
-            fq = f"{dout}q_timeseries_c{jmpi:03d}.out"
-            q_ts[:,jz] = np.loadtxt(fq, skiprows=istart, usecols=cols)
-            ftv = f"{dout}tv_timeseries_c{jmpi:03d}.out"
-            thetav_ts[:,jz] = np.loadtxt(ftv, skiprows=istart, usecols=cols)
-            fqw = f"{dout}wq_sgs_timeseries_c{jmpi:03d}.out"
-            wq_sgs_ts[:,jz] = np.loadtxt(fqw, skiprows=istart, usecols=cols)
-            fout_all += [fq, ftv, fqw]
-        # increment jz
-        jz += nz_mpi
-    # apply scales
-    u_ts *= u_scale
-    v_ts *= u_scale
-    w_ts *= u_scale
-    theta_ts *= theta_scale
-    txz_ts *= (u_scale * u_scale)
-    tyz_ts *= (u_scale * u_scale)
-    q3_ts *= (u_scale * theta_scale)
-    if use_q:
-        q_ts *= q_scale
-        thetav_ts *= theta_scale
-        wq_sgs_ts *= (u_scale * q_scale)
-    # define dictionary of attributes
-    attrs = {"label": simlabel, "dt": delta_t, "nt": nt, "nz": nz, "total_time": nhr}
-    # combine DataArrays into Dataset and save as netcdf
-    # initialize empty Dataset
-    ts_all = xr.Dataset(data_vars=None, coords=dict(t=time, z=zu), attrs=attrs)
-    # now store
-    ts_all["u"] = u_ts
-    ts_all["v"] = v_ts
-    ts_all["w"] = w_ts.interp(z=zu, method="linear", 
-                              kwargs={"fill_value": "extrapolate"})
-    ts_all["theta"] = theta_ts
-    ts_all["txz"] = txz_ts.interp(z=zu, method="linear", 
-                                  kwargs={"fill_value": "extrapolate"})
-    ts_all["tyz"] = tyz_ts.interp(z=zu, method="linear", 
-                                  kwargs={"fill_value": "extrapolate"})
-    ts_all["q3"] = q3_ts.interp(z=zu, method="linear", 
-                                kwargs={"fill_value": "extrapolate"})
-    if use_q:
-        ts_all["q"] = q_ts
-        ts_all["thetav"] = thetav_ts
-        ts_all["qw_sgs"] = wq_sgs_ts.interp(z=zu, method="linear",
+    # at this point, all timeseries file levels combined into one
+    # npz file per variable, so load each one
+    # u
+    f01 = f"{dout}u_timeseries.npz"
+    u_ts = np.load(f01)["arr_0"][:,1:] * u_scale
+    # v
+    f02 = f"{dout}v_timeseries.npz"
+    v_ts = np.load(f02)["arr_0"][:,1:] * u_scale
+    # w
+    f03 = f"{dout}w_timeseries.npz"
+    w_ts = np.load(f03)["arr_0"][:,1:] * u_scale
+    # theta
+    f04 = f"{dout}t_timeseries.npz"
+    theta_ts = np.load(f04)["arr_0"][:,1:] * theta_scale
+    # q
+    f05 = f"{dout}q_timeseries.npz"
+    q_ts = np.load(f05)["arr_0"][:,1:] * q_scale
+    # thetav
+    f06 = f"{dout}tv_timeseries.npz"
+    thetav_ts = np.load(f06)["arr_0"][:,1:] * theta_scale
+    # p
+    f07 = f"{dout}p_timeseries.npz"
+    p_ts = np.load(f06)["arr_0"][:,1:] # dont know appropriate scale yet
+    # txx
+    f08 = f"{dout}txx_timeseries.npz"
+    txx_ts = np.load(f08)["arr_0"][:,1:] * u_scale * u_scale
+    # txy
+    f09 = f"{dout}txy_timeseries.npz"
+    txy_ts = np.load(f09)["arr_0"][:,1:] * u_scale * u_scale
+    # txz
+    f10 = f"{dout}txz_timeseries.npz"
+    txz_ts = np.load(f10)["arr_0"][:,1:] * u_scale * u_scale
+    # tyy
+    f11 = f"{dout}tyy_timeseries.npz"
+    tyy_ts = np.load(f11)["arr_0"][:,1:] * u_scale * u_scale
+    # tyz
+    f12 = f"{dout}tyz_timeseries.npz"
+    tyz_ts = np.load(f12)["arr_0"][:,1:] * u_scale * u_scale
+    # tzz
+    f13 = f"{dout}tzz_timeseries.npz"
+    tzz_ts = np.load(f13)["arr_0"][:,1:] * u_scale * u_scale
+    # sgs_t3
+    f14 = f"{dout}sgs_t3_timeseries.npz"
+    tw_sgs_ts = np.load(f14)["arr_0"][:,1:] * theta_scale * u_scale
+    # sgs_q3
+    f15 = f"{dout}sgs_q3_timeseries.npz"
+    qw_sgs_ts = np.load(f15)["arr_0"][:,1:] * q_scale * u_scale
+    # e_sgs
+    f16 = f"{dout}e_sgs_timeseries.npz"
+    e_sgs_ts = np.load(f16)["arr_0"][:,1:] * u_scale * u_scale
+    # dissip
+    f17 = f"{dout}dissip_timeseries.npz"
+    dissip_ts = np.load(f17)["arr_0"][:,1:] * u_scale * u_scale * u_scale / Lz
+
+    # determine time array from number of timesteps in these files
+    # load all timestamps because we have control over output in sim now
+    nt = u_ts.shape[0]
+    time = np.arange(nt, dtype=np.float64) * params["dt"]
+    nhr = int(nt * params["dt"] / 3600.)
+    print(f"Timestsps in npz files: {nt} = final {nhr} hrs of sim")
+    # update params to have this updated nhr value, delete nhr_s
+    params["total_time"] = nhr
+    del params["nhr_s"]
+
+    # initialize Dataset for saving output
+    ts_all = xr.Dataset(data_vars=None, coords=dict(t=time,z=zu), attrs=params)
+    # add data on uvp nodes: u,v,theta,q,p
+    ts_all["u"] = xr.DataArray(u_ts, dims=("t","z"), 
+                               coords=dict(t=time, z=zu))
+    ts_all["v"] = xr.DataArray(v_ts, dims=("t","z"), 
+                               coords=dict(t=time, z=zu))
+    ts_all["theta"] = xr.DataArray(theta_ts, dims=("t","z"), 
+                                   coords=dict(t=time, z=zu))
+    ts_all["thetav"] = xr.DataArray(thetav_ts, dims=("t","z"), 
+                                    coords=dict(t=time, z=zu))
+    ts_all["q"] = xr.DataArray(q_ts, dims=("t","z"), 
+                               coords=dict(t=time, z=zu))
+    ts_all["p"] = xr.DataArray(p_ts, dims=("t","z"), 
+                               coords=dict(t=time, z=zu))
+    # interpolate data on w nodes and add: w, t_ij, sgs_q3, sgs_t3, e_sgs, dissip
+    ts_all["w"] =  xr.DataArray(w_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                               ).interp(z=zu, method="linear", 
+                                        kwargs={"fill_value": "extrapolate"})
+    ts_all["txx"] =  xr.DataArray(txx_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                 ).interp(z=zu, method="linear", 
+                                          kwargs={"fill_value": "extrapolate"})
+    ts_all["txy"] =  xr.DataArray(txy_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                 ).interp(z=zu, method="linear", 
+                                          kwargs={"fill_value": "extrapolate"})
+    ts_all["txz"] =  xr.DataArray(txz_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                 ).interp(z=zu, method="linear", 
+                                          kwargs={"fill_value": "extrapolate"})
+    ts_all["tyy"] =  xr.DataArray(tyy_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                 ).interp(z=zu, method="linear", 
+                                          kwargs={"fill_value": "extrapolate"})
+    ts_all["tyz"] =  xr.DataArray(tyz_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                 ).interp(z=zu, method="linear", 
+                                          kwargs={"fill_value": "extrapolate"})
+    ts_all["tzz"] =  xr.DataArray(tzz_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                 ).interp(z=zu, method="linear", 
+                                          kwargs={"fill_value": "extrapolate"})
+    ts_all["tw_sgs"] =  xr.DataArray(tw_sgs_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                    ).interp(z=zu, method="linear", 
+                                             kwargs={"fill_value": "extrapolate"})
+    ts_all["qw_sgs"] =  xr.DataArray(qw_sgs_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                    ).interp(z=zu, method="linear", 
+                                             kwargs={"fill_value": "extrapolate"})
+    ts_all["e_sgs"] =  xr.DataArray(e_sgs_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                   ).interp(z=zu, method="linear", 
                                             kwargs={"fill_value": "extrapolate"})
+    ts_all["dissip"] =  xr.DataArray(dissip_ts, dims=("t","z"), coords=dict(t=time, z=zw)
+                                    ).interp(z=zu, method="linear", 
+                                             kwargs={"fill_value": "extrapolate"})
     # save to netcdf
     fsave_ts = f"{dnc}timeseries_all_{nhr}h.nc"
     with ProgressBar():
         ts_all.to_netcdf(fsave_ts, mode="w")
     
     # optionally delete files
-    if del_raw:
+    if del_npz:
         print("Cleaning up raw files...")
-        for ff in fout_all:
-            os.system(f"rm {ff}")
+        os.system(f"rm {dout}*.npz")
         
-    print(f"Finished saving timeseries for simulation {simlabel}")
+    print(f"Finished saving timeseries for simulation {params['simlabel']}")
 
     return
 # ---------------------------------------------

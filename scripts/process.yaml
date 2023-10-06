@@ -9,24 +9,33 @@
 # Use updated process_raw_sim function that uses new LES output so not
 # necessary to hardcode parameters here. Focus primarily on: out2netcdf,
 # calc_stats, nc_rotate, and (soon) timeseries2netcdf
+# Updated: 6 October 2023
+# Added support for timeseries2netcdf and a new organize_output for use
+# with batch jobs on supercomputers with multiple successive runs
 # --------------------------------
 # name of directory with raw output files
 d0: /users/bgreene/simulations/CBL/
 # log file name
 flog: sims.yaml
 # list of simulation names
-simlist: [u09_tw24_qw10_256]
+simlist: [u01_tw24_qw10_256, u09_tw24_qw10_256]
 # label to give stats file that matchs nhr
 nhr_s: 5-6h
 # number of hours from end to process
 nhr: 1
+# organize file output first?
+organize: True
+# number of batch jobs, if applicable
+nrun: 9
 # delete raw output files?
 del_raw: True
 # overwrite old files if they exist?
 overwrite: False
 # compute stats?
-cstats: True
+cstats: False
 # rotate coordinates?
 rotate: False
+# compute timeseries files?
+ts2nc: True
 # delete remaining raw files?
 del_remaining: True

@@ -29,9 +29,12 @@ for sim in config["simlist"]:
     fstats = process_raw_sim(dout=dout, nhr=config["nhr"], 
                              nhr_s=config["nhr_s"],
                              del_raw=config["del_raw"], 
+                             organize=config["organize"],
+                             nrun=config["nrun"],
                              overwrite=config["overwrite"], 
                              cstats=config["cstats"], 
                              rotate=config["rotate"],
+                             ts2nc=config["ts2nc"],
                              del_remaining=config["del_remaining"])
     # update sims.yaml with resulting stats file
     if fstats is not None:
