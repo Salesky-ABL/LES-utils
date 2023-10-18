@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/bin/python
+#!/glade/work/bgreene/conda-envs/LES/bin/python
 # --------------------------------
 # Name: LESutils.py
 # Author: Brian R. Greene
@@ -440,7 +440,7 @@ def organize_output(dout, nrun):
         if r == nrun:
             pnew = "params.yaml"
         else:
-            pnew = "params{r:02d}.yaml"
+            pnew = f"params{r:02d}.yaml"
         os.system(f"mv {drun}params.yaml {dout}{pnew}")
         print(f"Removing directory: {drun}")
         os.system(f"rm -r {drun}")
@@ -1383,7 +1383,9 @@ def xr_rotate(df):
     Lx, Ly = df.Lx, df.Ly
     x, y, z = df.x, df.y, df.z
     # would like to use the following vars (basically ignore u_rot, v_rot)
-    vuse = ["u","v","w","theta","q","txz","tyz","q3","wq_sgs","dissip"]
+    vuse = ["u","v","w","theta","q","p",
+            "txx","txy","txz","tyy","tyz","tzz",
+            "tw_sgs","qw_sgs","e_sgs","dissip"]
     # check against what is actually in df
     vhave = [key for key in vuse if key in list(df.keys())]
     # initialize empty Dataset to store rotated data

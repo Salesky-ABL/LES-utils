@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/bin/python
+#!/glade/work/bgreene/conda-envs/LES/bin/python
 # --------------------------------
 # Name: RFM.py
 # Author: Brian R. Greene
@@ -39,14 +39,13 @@ def calc_inst_var(d1, d2, SGS=None):
     else:
         return d1d2_cov
 # --------------------------------
-def calc_4_order(dnc, df, use_q=True):
+def calc_4_order(dnc, df):
     """Calculate 4th-order variances (u'w'u'w', u'u'u'u', etc.) for use
     in fitting RFM curves as well as computing LP errors later.
     Also calculate 1d autocorrelation function for _all_ parameters here. 
     Save netcdf file in dnc.
     :param str dnc: absolute path to netcdf directory for saving new file
     :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
-    :param bool use_q: flag for including humidity variables in calculations
     """
     # begin by computing "instantaneous" variances and covariances, store in df
     print("Calculating 'instantaneous' variances and covariances")
@@ -56,24 +55,31 @@ def calc_4_order(dnc, df, use_q=True):
     # v'w'
     df["vw"] = calc_inst_var(df.v, df.w, df.tyz)
     # t'w'
-    df["tw"] = calc_inst_var(df.theta, df.w, df.q3)
-    if use_q:
-        df["qw"] = calc_inst_var(df.q, df.w, df.wq_sgs)
+    df["tw"] = calc_inst_var(df.theta, df.w, df.tw_sgs)
+    # q'w'
+    df["qw"] = calc_inst_var(df.q, df.w, df.qw_sgs)
+    # tv'w'
+    tvw_sgs = df.tw_sgs + 0.61*df.thetav.isel(z=0).mean()*df.qw_sgs/1000.
+    df["tvw"] = calc_inst_var(df.thetav, df.w, tvw_sgs)
     # need both rotated and unrotated to get wspd, wdir stats later
+    # use SGS TKE as subgrid contributions here
+    e23 = (2./3.) * df.e_sgs
     # u'u'
-    df["uu"] = calc_inst_var(df.u, df.u)
+    df["uu"] = calc_inst_var(df.u, df.u, e23)
     # u'u' rot
-    df["uur"] = calc_inst_var(df.u_rot, df.u_rot)
+    df["uur"] = calc_inst_var(df.u_rot, df.u_rot, e23)
     # v'v'
-    df["vv"] = calc_inst_var(df.v, df.v)
+    df["vv"] = calc_inst_var(df.v, df.v, e23)
     # v'v' rot
-    df["vvr"] = calc_inst_var(df.v_rot, df.v_rot)
+    df["vvr"] = calc_inst_var(df.v_rot, df.v_rot, e23)
     # w'w'
-    df["ww"] = calc_inst_var(df.w, df.w)
+    df["ww"] = calc_inst_var(df.w, df.w, e23)
     # t't'
     df["tt"] = calc_inst_var(df.theta, df.theta)
-    if use_q:
-        df["qq"] = calc_inst_var(df.q, df.q)
+    # q'q'
+    df["qq"] = calc_inst_var(df.q, df.q)
+    # tv'tv'
+    df["tvtv"] = calc_inst_var(df.thetav, df.thetav)
     #
     # Using instantaneous vars/covars, calculate inst 4th order variances
     #
@@ -96,10 +102,14 @@ def calc_4_order(dnc, df, use_q=True):
     df["wwww"] = calc_inst_var(df.ww, df.ww)
     # t't't't'
     df["tttt"] = calc_inst_var(df.tt, df.tt)
-    # q'q'q'q', q'w'q'w'
-    if use_q:
-        df["qwqw"] = calc_inst_var(df.qw, df.qw)
-        df["qqqq"] = calc_inst_var(df.qq, df.qq)
+    # q'w'q'w'
+    df["qwqw"] = calc_inst_var(df.qw, df.qw)
+    # q'q'q'q'
+    df["qqqq"] = calc_inst_var(df.qq, df.qq)
+    # tv'tv'tv'tv'
+    df["tvtvtvtv"] = calc_inst_var(df.tvtv, df.tvtv)
+    # tv'w'tv'w'
+    df["tvwtvw"] = calc_inst_var(df.tvw, df.tvw)
     # define new Dataset to hold all the mean 4th order variances
     var4 = xr.Dataset(data_vars=None, coords=dict(z=df.z), attrs=df.attrs)
     # u'w'u'w' = var{u'w'} = (u'w' - <u'w'>_xyt)**2
@@ -120,9 +130,14 @@ def calc_4_order(dnc, df, use_q=True):
     var4["wwww_var"] = df.wwww.mean(dim=("time","x","y"))
     # t't't't'
     var4["tttt_var"] = df.tttt.mean(dim=("time","x","y"))
-    if use_q:
-        var4["qwqw_var"] = df.qwqw.mean(dim=("time","x","y"))
-        var4["qqqq_var"] = df.qqqq.mean(dim=("time","x","y"))
+    # q'w'q'w'
+    var4["qwqw_var"] = df.qwqw.mean(dim=("time","x","y"))
+    # q'q'q'q'
+    var4["qqqq_var"] = df.qqqq.mean(dim=("time","x","y"))
+    # tv'tv'tv'tv'
+    var4["tvtvtvtv_var"] = df.tvtvtvtv.mean(dim=("time","x","y"))
+    # tv'w'tv'w'
+    var4["tvwtvw_var"] = df.tvwtvw.mean(dim=("time","x","y"))
     # save file
     fsaveV = f"{dnc}variances_4_order.nc"
     if os.path.exists(fsaveV):
@@ -139,12 +154,12 @@ def calc_4_order(dnc, df, use_q=True):
     R = xr.Dataset(data_vars=None, attrs=df.attrs)
     # define list of parameters for looping
     vacf = ["u", "u_rot", "v", "v_rot", "w", "theta",
+            "thetav", "q",
             "uw", "vw", "tw",
-            "uu", "uur", "vv", "vvr", "ww", "tt",
-            "uwuw", "vwvw", "twtw",
-            "uuuu", "uuuur", "vvvv", "vvvvr", "wwww", "tttt"]
-    if use_q:
-        vacf += ["q", "qw", "qq", "qwqw", "qqqq"]
+            "uu", "uur", "vv", "vvr", "ww", "tt", "tvtv", "qq",
+            "uwuw", "vwvw", "twtw", "tvwtvw", "qwqw",
+            "uuuu", "uuuur", "vvvv", "vvvvr", "wwww", 
+            "tttt", "tvtvtvtv", "qqqq"]
     # begin loop
     for v in vacf:
         # use acf1d and compute
@@ -222,7 +237,7 @@ def relaxed_filter(f, filt, delta_x):
     # return
     return var_f_all / float(f.time.size)
 # --------------------------------
-def calc_RFM_var(dnc, df, use_q, filt, delta_x):
+def calc_RFM_var(dnc, df, filt, delta_x):
     """Calculate variances of parameters at each filter width delta_x.
     Save netcdf file in dnc.
     :param str dnc: absolute path to netcdf directory for saving new file
@@ -239,30 +254,37 @@ def calc_RFM_var(dnc, df, use_q, filt, delta_x):
     # v'w'
     df["vw"] = calc_inst_var(df.v, df.w, df.tyz)
     # t'w'
-    df["tw"] = calc_inst_var(df.theta, df.w, df.q3)
+    df["tw"] = calc_inst_var(df.theta, df.w, df.tw_sgs)
+    # use SGS TKE as subgrid contributions here
+    e23 = (2./3.) * df.e_sgs
     # u'u'
-    df["uu"] = calc_inst_var(df.u, df.u)
+    df["uu"] = calc_inst_var(df.u, df.u, e23)
     # u'u' rot
-    df["uur"] = calc_inst_var(df.u_rot, df.u_rot)
+    df["uur"] = calc_inst_var(df.u_rot, df.u_rot, e23)
     # v'v'
-    df["vv"] = calc_inst_var(df.v, df.v)
+    df["vv"] = calc_inst_var(df.v, df.v, e23)
     # v'v' rot
-    df["vvr"] = calc_inst_var(df.v_rot, df.v_rot)
+    df["vvr"] = calc_inst_var(df.v_rot, df.v_rot, e23)
     # w'w'
-    df["ww"] = calc_inst_var(df.w, df.w)
+    df["ww"] = calc_inst_var(df.w, df.w, e23)
     # t't'
     df["tt"] = calc_inst_var(df.theta, df.theta)
-    if use_q:
-        df["qq"] = calc_inst_var(df.q, df.q)
-        df["qw"] = calc_inst_var(df.q, df.w, df.wq_sgs)
+    # tv'tv'
+    df["tvtv"] = calc_inst_var(df.thetav, df.thetav)
+    # tv'w'
+    tvw_sgs = df.tw_sgs + 0.61*df.thetav.isel(z=0).mean()*df.qw_sgs/1000.
+    df["tvw"] = calc_inst_var(df.thetav, df.w, tvw_sgs)
+    # q'q'
+    df["qq"] = calc_inst_var(df.q, df.q)
+    # q'w'
+    df["qw"] = calc_inst_var(df.q, df.w, df.qw_sgs)
     # initialize empty Dataset for autocorrs
     RFMvar = xr.Dataset(data_vars=None, attrs=df.attrs)
     # define list of parameters for looping
-    vfilt = ["u", "u_rot", "v", "v_rot", "w", "theta",
-             "uw", "vw", "tw",
-             "uu", "uur", "vv", "vvr", "ww", "tt"]
-    if use_q:
-        vfilt += ["q", "qw", "qq"]
+    vfilt = ["u", "u_rot", "v", "v_rot", "w", "theta", "thetav", "q",
+             "uw", "vw", "tw", "qw", "tvw",
+             "uu", "uur", "vv", "vvr", "ww", 
+             "tt", "qq", "tvtv"]
     # begin loop
     for v in vfilt:
         # use relaxed_filter and compute
@@ -302,20 +324,13 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
     p = xr.Dataset(data_vars=None, coords=dict(z=zabl), attrs=RFM_var.attrs)
     # define lists of desired parameters and their corresponding variances
     # 1st order - vars from stat file
-    vRFM1 = ["u", "u_rot", "v", "v_rot", "theta"]
-    vvar1 = ["u_var", "u_var_rot", "v_var", "v_var_rot", "theta_var"]
+    vRFM1 = ["u", "u_rot", "v", "v_rot", "theta", "q", "thetav"]
+    vvar1 = ["u_var", "u_var_rot", "v_var", "v_var_rot", "theta_var", "q_var", "thetav_var"]
     # 2nd order - vars from var4 file
-    vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt"]
+    vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt", "qw", "qq", "tvtv", "tvw"]
     vvar2 = ["uwuw_var", "vwvw_var", "twtw_var", "uuuu_var", "uuuur_var",
-             "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var"]
-    # check for q in RFM_var and add to all lists above
-    if "q_mean" in list(s.keys()):
-        # 1
-        vRFM1.append("q")
-        vvar1.append("q_var")
-        # 2
-        vRFM2 += ["qw", "qq"]
-        vvar2 += ["qwqw_var", "qqqq_var"]
+             "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var", "qwqw_var", "qqqq_var",
+             "tvtvtvtv_var", "tvwtvw_var"]
     # grab delta_x ranges based on dx_fit_1 and dx_fit_2
     ix1 = np.where((RFM_var.delta_x >= dx_fit_1[0]) &\
                    (RFM_var.delta_x <= dx_fit_1[1]))[0]
@@ -406,25 +421,17 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     err = xr.Dataset(data_vars=None, coords=dict(z=C.z), attrs=C.attrs)
     # define lists of desired parameters and their corresponding variances
     # 1st order - vars from stat file
-    vRFM1 = ["u", "u_rot", "v", "v_rot", "theta"]
-    vvar1 = ["u_var", "u_var_rot", "v_var", "v_var_rot", "theta_var"]
-    vavg1 = ["u_mean", "u_mean_rot", "v_mean", "v_mean_rot", "theta_mean"]
+    vRFM1 = ["u", "u_rot", "v", "v_rot", "theta", "q", "thetav"]
+    vvar1 = ["u_var", "u_var_rot", "v_var", "v_var_rot", "theta_var", "q_var", "thetav_var"]
+    vavg1 = ["u_mean", "u_mean_rot", "v_mean", "v_mean_rot", "theta_mean", "q_mean", "thetav_mean"]
     # 2nd order - vars from var4 file
-    vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt"]
+    vRFM2 = ["uw", "vw", "tw", "uu", "uur", "vv", "vvr", "ww", "tt", "qw", "qq", "tvtv", "tvw"]
     vvar2 = ["uwuw_var", "vwvw_var", "twtw_var", "uuuu_var", "uuuur_var",
-             "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var"]
+             "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var", "qwqw_var", "qqqq_var", 
+             "tvtvtvtv_var", "tvwtvw_var"]
     vavg2 = ["uw_cov_tot", "vw_cov_tot", "tw_cov_tot", "u_var", "u_var_rot",
-             "v_var", "v_var_rot", "w_var", "theta_var"]   
-    # check for q in RFM_var and add to all lists above
-    if "q_mean" in list(s.keys()):
-        # 1
-        vRFM1.append("q")
-        vvar1.append("q_var")
-        vavg1.append("q_mean")
-        # 2
-        vRFM2 += ["qw", "qq"]
-        vvar2 += ["qwqw_var", "qqqq_var"]
-        vavg2 += ["qw_cov_tot", "q_var"]
+             "v_var", "v_var_rot", "w_var", "theta_var", "qw_cov_tot", "q_var", 
+             "thetav_var", "tvw_cov_tot"]   
     # Begin calculating errors
     # Start with 1st order
     for v, var, avg in zip(vRFM1, vvar1, vavg1):
@@ -536,12 +543,12 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
 # --------------------------------
 # main loop
 if __name__ == "__main__":
-    dnc = "/home/bgreene/simulations/u15_tw10_qw04_dry3/output/netcdf/"
-    dd, s = load_full(dnc, 360000, 432000, 1000, 0.05, False, 
-                      "mean_stats_xyt_5-6h_rot.nc", True)
+    dnc = "/glade/scratch/bgreene/CBL/u15_tw03_qw01_256/output/netcdf/"
+    dd, s = load_full(dnc, 450000, 540000, 1000, 0.04,
+                      "mean_stats_xyt_5-6h.nc", True)
     
     # calculate and load 4th order variances
-    calc_4_order(dnc, dd, True)
+    calc_4_order(dnc, dd)
     # load again
     var4 = xr.load_dataset(dnc+"variances_4_order.nc")
     R = xr.load_dataset(dnc+"autocorr.nc")
@@ -554,7 +561,7 @@ if __name__ == "__main__":
     # construct filter transfer function
     filt = construct_filter(delta_x, dd.nx, dd.Lx)
     # call RFM
-    calc_RFM_var(dnc, dd, True, filt, delta_x)
+    calc_RFM_var(dnc, dd, filt, delta_x)
     # load back this data
     RFM_var = xr.load_dataset(dnc+"RFM.nc")
 

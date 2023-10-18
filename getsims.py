@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/envs/LES/bin/python
+#!/glade/work/bgreene/conda-envs/LES/bin/python
 # --------------------------------
 # Name: getsims.py
 # Author: Brian R. Greene

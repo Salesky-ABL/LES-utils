@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/envs/LES/bin/python
+#!/glade/work/bgreene/conda-envs/LES/bin/python
 # --------------------------------
 # Name: process.py
 # Author: Brian R. Greene
@@ -10,13 +10,11 @@ import sys
 sys.path.append("..")
 import yaml
 import os
-from time import sleep
-from datetime import datetime
 from LESutils import process_raw_sim
 from getsims import update_log
 
 # load yaml file
-fyaml = "/users/bgreene/LES-utils/scripts/process.yaml"
+fyaml = "/glade/u/home/bgreene/LES-utils/scripts/process.yaml"
 with open(fyaml) as f:
     config = yaml.safe_load(f)
 
