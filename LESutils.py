@@ -822,7 +822,7 @@ def load_stats(fstats):
     dd["zL"] = dd.z / dd.L
     if dd.lbc == 0:
         # calculate TKE-based sbl depth
-        dd["he"] = dd.z.where(dd.e <= 0.05*dd.e[0], drop=True)[0]
+        # dd["he"] = dd.z.where(dd.e <= 0.05*dd.e[0], drop=True)[0]
         # calculate h/L as global stability parameter
         dd["hL"] = dd.h / dd.L
         # create string for labels from hL
@@ -960,7 +960,7 @@ def timeseries2netcdf(dout, dnc, del_npz=False, **params):
     thetav_ts = np.load(f06)["arr_0"][:,1:] * theta_scale
     # p
     f07 = f"{dout}p_timeseries.npz"
-    p_ts = np.load(f06)["arr_0"][:,1:] # dont know appropriate scale yet
+    p_ts = np.load(f07)["arr_0"][:,1:] # dont know appropriate scale yet
     # txx
     f08 = f"{dout}txx_timeseries.npz"
     txx_ts = np.load(f08)["arr_0"][:,1:] * u_scale * u_scale
