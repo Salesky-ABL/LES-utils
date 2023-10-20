@@ -7,9 +7,9 @@
 # for use with process.py
 # --------------------------------
 # name of directory with raw output files
-dout: "/home/bgreene/simulations/cr0.50_u08_192/output/"
+dout: "/home/bgreene/simulations/SBL/cr0.25_u08_240/output/"
 # name of directory to save netcdf files
-dnc: "/home/bgreene/simulations/cr0.50_u08_192/output/netcdf/"
+dnc: "/home/bgreene/simulations/SBL/cr0.25_u08_240/output/netcdf/"
 # simulation parameters
 # first timestep to load
 t0: 1080000
@@ -20,7 +20,7 @@ dt: 1000
 # dimensional timestep
 delta_t: 0.02
 # simulation resolution
-res: [192, 192, 192]
+res: [240, 240, 240]
 # simulation domain size in m
 # dim: [12000, 12000, 2000]
 dim: [800, 800, 400]
@@ -31,13 +31,13 @@ use_dissip: True
 # use moisture fields
 use_q: False
 # simulation label
-simlab: "cr0.50_u08_192"
+simlab: "cr0.25_u08_240"
 # averaging period
 tavg: "9-10h"
 # detrend for calc_stats
 detrend: True
 # delete raw .out files
-del_raw: False
+del_raw: True
 # timeseries specific flags
 # number of hours to load
 nhr: 1
@@ -45,15 +45,17 @@ nhr: 1
 tf: 720000
 # flag for SBL
 SBL: True
+# Number of levels per MPI process
+nz_mpi: 2
 # name of stats file to load, if applicable
 fstats: "mean_stats_xyt_9-10h_rot.nc"
 # use rotated files, if applicable
-use_rot: True
+use_rot: False
 # flags for running functions
 sim2nc: False
 calcstats: False
 statslong: False
-ts2nc: False
+ts2nc: True
 ncrot: True
 # flags for running spec functions
 ac1d: False

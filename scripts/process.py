@@ -64,8 +64,9 @@ if config["ts2nc"]:
     print("Begin timeseries2netcdf...")
     timeseries2netcdf(config["dout"], config["dnc"], config["scales"],
                       config["use_q"], config["delta_t"], config["res"][2], 
-                      config["dim"][2], config["nhr"], config["tf"], 
-                      config["simlab"], del_raw=config["del_raw"])
+                      config["dim"][2], config["nz_mpi"], config["nhr"], 
+                      config["tf"], config["simlab"], 
+                      del_raw=config["del_raw"])
     print("Finished timeseries2netcdf!")
 
 # nc_rotate
