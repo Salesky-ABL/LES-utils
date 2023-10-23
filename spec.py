@@ -157,11 +157,12 @@ def spectrogram(dnc, fall, s, detrend="constant"):
         print(f"Loading file: {ff}")
         d = xr.load_dataset(ff)
         # calculate rotated u, v based on xy mean
-        uxy = d.u.mean(dim=("x","y"))
-        vxy = d.v.mean(dim=("x","y"))
-        angle = np.arctan2(vxy, uxy)
-        d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
-        d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+        if not bool(d.rotate):
+            uxy = d.u.mean(dim=("x","y"))
+            vxy = d.v.mean(dim=("x","y"))
+            angle = np.arctan2(vxy, uxy)
+            d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+            d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
         # calculate thetav
         d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
         # loop over variables for spectra
@@ -407,11 +408,12 @@ def nc_LCS(dnc, fall, s, zzi_list, const_zr_varlist, const_zr_savelist,
         print(f"Loading file: {ff}")
         d = xr.load_dataset(ff)
         # calculate rotated u, v based on xy mean
-        uxy = d.u.mean(dim=("x","y"))
-        vxy = d.v.mean(dim=("x","y"))
-        angle = np.arctan2(vxy, uxy)
-        d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
-        d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+        if not bool(d.rotate):
+            uxy = d.u.mean(dim=("x","y"))
+            vxy = d.v.mean(dim=("x","y"))
+            angle = np.arctan2(vxy, uxy)
+            d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+            d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
         # calculate thetav
         d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
         # first calculate LCS for each value of z/zi and each variable
@@ -536,8 +538,8 @@ def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
     # max points to include
     n_delta = int(s.h/dx)
     # number of points upstream and downstream to include
-    n_min = 3*n_delta
-    n_max = 3*n_delta
+    n_min = 2*n_delta
+    n_max = 2*n_delta
     # initialize conditionally averaged arrays: one for each variable in varlist
     # do this in a dictionary
     condall = {}
@@ -666,11 +668,12 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
         print(f"Loading file: {ff}")
         d = xr.load_dataset(ff)
         # calculate rotated u, v based on xy mean
-        uxy = d.u.mean(dim=("x","y"))
-        vxy = d.v.mean(dim=("x","y"))
-        angle = np.arctan2(vxy, uxy)
-        d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
-        d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+        if not bool(d.rotate):
+            uxy = d.u.mean(dim=("x","y"))
+            vxy = d.v.mean(dim=("x","y"))
+            angle = np.arctan2(vxy, uxy)
+            d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+            d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
         # calculate thetav
         d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
         # store necessary fields in dictionary (reset each new file)
