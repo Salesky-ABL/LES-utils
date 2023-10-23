@@ -1,4 +1,4 @@
-#!/glade/work/bgreene/conda-envs/LES/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: LESutils.py
 # Author: Brian R. Greene
@@ -762,7 +762,9 @@ def load_stats(fstats):
     dd["ustar"] = ((dd.uw_cov_tot**2.) + (dd.vw_cov_tot**2.)) ** 0.25
     dd["ustar2"] = dd.ustar ** 2.
     if dd.lbc == 0:
-        dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
+        # dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
+        # use 1% threshold instead of 5%
+        dd["h"] = dd.z.where(dd.ustar2 <= 0.01*dd.ustar2[0], drop=True)[0] / 0.99
     else:
         # CBL
         dd["h"] = dd.z.isel(z=dd.tw_cov_tot.argmin())
@@ -1000,7 +1002,8 @@ def timeseries2netcdf(dout, dnc, del_npz=False, **params):
     print(f"Timestsps in npz files: {nt} = final {nhr} hrs of sim")
     # update params to have this updated nhr value, delete nhr_s
     params["total_time"] = nhr
-    del params["nhr_s"]
+    if "nhr_s" in params.keys():
+        del params["nhr_s"]
 
     # initialize Dataset for saving output
     ts_all = xr.Dataset(data_vars=None, coords=dict(t=time,z=zu), attrs=params)
