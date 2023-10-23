@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: spec.py
 # Author: Brian R. Greene
@@ -126,70 +126,91 @@ def autocorr_2d(dnc, df, timeavg=True):
     print("Finished computing 2d autocorrelation functions!")
     return
 # --------------------------------
-def spectrogram(dnc, df, detrend="constant", use_q=True):
-    """Input 4D xarray Dataset with loaded LES data to calculate
-    power spectral density along x-direction, then average in
-    y and time. Calculate for u', w', theta', q', u'w', theta'w',
-    q'w', theta'q'.
-    Save netcdf file in dnc.
-
-    :param str dnc: absolute path to netcdf directory for saving new file
-    :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
-    :param str detrend: how to detrend along x-axis before processing,\
+def spectrogram(dnc, fall, s, detrend="constant"):
+    """Calculate power spectral density along x-direction, then 
+    average in y and time for a given list of files.
+    Calculate for u', w', theta', q', u'w', theta'w', q'w', theta'q'.
+    Save a single netcdf file in dnc.
+    -Input-
+    dnc: string, absolute path to netcdf directory for saving new file
+    fall: list of strings of all the files to be loaded one-by-one
+    s: xr.Dataset, stats file corresponding to simulation for attrs
+    detrend: string, how to detrend along x-axis before processing,\
         default="constant" (also accepts "linear")
-    :param bool use_q: flag to use specific humidity data, default=True
     """
+    # define the variables to loop over for spectra
+    vall = ["u_rot", "w", "theta", "q", "thetav"]
+    vsave = ["uu", "ww", "tt", "qq", "tvtv"]
+    # variables to loop over for cross spectra
+    vall2 = [("u_rot", "w"), ("theta", "w"), ("q", "w"), ("theta", "q")]
+    vsave2 = ["uw", "tw", "qw", "tq"]
     # construct Dataset to save
-    Esave = xr.Dataset(data_vars=None, attrs=df.attrs)
+    Esave = xr.Dataset(data_vars=None, attrs=s.attrs)
     # add additional attr for detrend_first
     Esave.attrs["detrend_type"] = str(detrend)
+    # get number of files
+    nf = len(fall)
 
-    # variables to loop over for calculations
-    vall = ["u_rot", "w", "theta"]
-    vsave = ["uu", "ww", "tt"]
-    if use_q:
-        vall += ["q", "thetav"]
-        vsave += ["qq", "tvtv"]
+    # begin looping over each file and load one by one
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # calculate rotated u, v based on xy mean
+        uxy = d.u.mean(dim=("x","y"))
+        vxy = d.v.mean(dim=("x","y"))
+        angle = np.arctan2(vxy, uxy)
+        d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+        d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+        # calculate thetav
+        d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
+        # loop over variables for spectra
+        for v, vs in zip(vall, vsave):
+            print(f"Computing spectra: {vs}")
+            # grab data
+            din = d[v]
+            # calculate PSD using xrft
+            PSD = xrft.power_spectrum(din, dim="x", true_phase=True, 
+                                      true_amplitude=True, detrend_type=detrend)
+            # average in y and time, take only real values
+            PSD_yavg = PSD.mean(dim=("y"))
+            # store in Esave
+            # if this is the first file, create new data variable
+            if jf == 0:
+                Esave[vs] = PSD_yavg.real
+            # otherwise, add to existing array for averaging in time later
+            else:
+                Esave[vs] += PSD_yavg.real
 
-    # loop over variables
-    for v, vs in zip(vall, vsave):
-        # grab data
-        din = df[v]
-        # calculate PSD using xrft
-        PSD = xrft.power_spectrum(din, dim="x", true_phase=True, 
-                                  true_amplitude=True, detrend_type=detrend)
-        # average in y and time, take only real values
-        PSD_ytavg = PSD.mean(dim=("time","y"))
-        # store in Esave
-        Esave[vs] = PSD_ytavg.real
-
-    # variables to loop over for cross spectra
-    vall2 = [("u_rot", "w"), ("theta", "w")]
-    vsave2 = ["uw", "tw"]
-    if use_q:
-        vall2 += [("q", "w"), ("theta", "q")]
-        vsave2 += ["qw", "tq"]
-
-    # loop over variables
-    for v, vs in zip(vall2, vsave2):
-        # grab data
-        din1, din2 = df[v[0]], df[v[1]]
-        # calculate cross spectrum using xrft
-        PSD = xrft.cross_spectrum(din1, din2, dim="x", scaling="density",
-                                  true_phase=True, true_amplitude=True,
-                                  detrend_type=detrend)
-        # average in y and time, take only real values
-        PSD_ytavg = PSD.mean(dim=("time","y"))
-        # store in Esave
-        Esave[vs] = PSD_ytavg.real
+        # loop over variables for cross spectra
+        for v, vs in zip(vall2, vsave2):
+            print(f"Computing cross spectra: {vs}")
+            # grab data
+            din1, din2 = d[v[0]], d[v[1]]
+            # calculate cross spectrum using xrft
+            PSD = xrft.cross_spectrum(din1, din2, dim="x", scaling="density",
+                                      true_phase=True, true_amplitude=True,
+                                      detrend_type=detrend)
+            # average in y and time, take only real values
+            PSD_yavg = PSD.mean(dim=("y"))
+            # store in Esave
+            # if this is the first file, create new data variable
+            if jf == 0:
+                Esave[vs] = PSD_yavg.real
+            # otherwise, add to existing array for averaging in time later
+            else:
+                Esave[vs] += PSD_yavg.real
     
     # only save positive frequencies
     Esave = Esave.where(Esave.freq_x > 0., drop=True)
+    # average in time by dividing by number of files
+    for vs in vsave+vsave2:
+        Esave[vs] /= float(nf)
     
     # save file and return
     # check if rotate attr exists
-    if "rotate" in df.attrs.keys():
-        if bool(df.rotate):
+    if "rotate" in d.attrs.keys():
+        if bool(d.rotate):
             fsave = f"{dnc}spectrogram_rot.nc"
         else:
             fsave = f"{dnc}spectrogram.nc"
@@ -326,7 +347,7 @@ def amp_mod(dnc, ts, delta):
     return
 # --------------------------------
 def LCS(dat1, dat2, zi=None, zzi=None):
-    """Calculate linear coherence spectra between two 4D DataArrays
+    """Calculate linear coherence spectra between two 3D DataArrays
     at a selected level, or at all heights. Return DataArray.
     :param DataArray dat1: first variable to compare
     :param DataArray dat2: second variable to compare (optional)
@@ -341,61 +362,95 @@ def LCS(dat1, dat2, zi=None, zzi=None):
     if ((zzi is not None) & (zi is not None)):
         izr = abs((dat1.z/zi).values - zzi).argmin()
         # calculate Gamma^2
-        G2 = np.absolute((F1 * F1.isel(z=izr).conj()).mean(dim=("y","time"))) ** 2./\
-                ((np.absolute(F1)**2.).mean(dim=("y","time")) *\
-                 (np.absolute(F1.isel(z=izr))**2.).mean(dim=("y","time")))
+        G2 = np.absolute((F1 * F1.isel(z=izr).conj()).mean(dim=("y"))) ** 2./\
+                ((np.absolute(F1)**2.).mean(dim=("y")) *\
+                 (np.absolute(F1.isel(z=izr))**2.).mean(dim=("y")))
         # Finished - return
         return G2
     else:
         # calc between 2 variables at all heights
         F2 = xrft.fft(dat2, dim="x", true_phase=True, true_amplitude=True,
                       detrend="linear")
-        G2 = np.absolute((F1 * F2.conj()).mean(dim=("y","time"))) ** 2. /\
-                ((np.absolute(F1)**2.).mean(dim=("y","time")) *\
-                 (np.absolute(F2)**2.).mean(dim=("y","time")))
+        G2 = np.absolute((F1 * F2.conj()).mean(dim=("y"))) ** 2. /\
+                ((np.absolute(F1)**2.).mean(dim=("y")) *\
+                 (np.absolute(F2)**2.).mean(dim=("y")))
         # Finished - return
         return G2
 # --------------------------------
-def nc_LCS(dnc, df, zi, zzi_list, const_zr_varlist, const_zr_savelist, 
+def nc_LCS(dnc, fall, s, zzi_list, const_zr_varlist, const_zr_savelist, 
            all_zr_pairs, all_zr_savelist):
     """Purpose: use LCS function to calculate LCS at desired values of zr
-    and combinations of variables. Save netcdf.
-    :param str dnc: absolute path to directory for saving files
-    :param xarray.Dataset df: full dataset with dimensions (time,x,y,z)
-    :param float zi: ABL depth
-    :param list<float> zzi_list: list of values of z/zi to use as zr
-    :param list<str> const_zr_varlist: list of variables to calculate at\
+    and combinations of variables. Reads one file at a time.
+    -Inputs-
+    dnc: string, absolute path to directory for saving files
+    fall: list of strings of all desired filenames to load/process
+    s: xr.Dataset, mean statistics file corresponding to fall
+    zzi_list: list of values of z/zi to use as zr
+    const_zr_varlist: list of variables to calculate at\
         corresponding list of zr in zzi_list
-    :param list<str> const_zr_savelist: list of variable names to use\
+    const_zr_savelist: list of variable names to use\
         as keys for saving in Dataset with const_zr_varlist
-    :param list<str> all_zr_pairs: list of variable pairs for desired\
+    all_zr_pairs: list of variable pairs for desired\
         LCS calculation at all reference heights
-    :param list<str> all_zr_savelist: list of variable names to use\
+    all_zr_savelist: list of variable names to use\
         as keys for saving in Dataset with all_zr_pairs
     """
-    # initialize empty Dataarray with same attrs as df
-    Gsave = xr.Dataset(data_vars=None, attrs=df.attrs)
-    # first calculate LCS for each value of z/zi and each variable
-    # begin loop over zzi
-    for j, jzi in enumerate(zzi_list):
-        # compute closest value of z/zi given jzi (jzi=value from 0-1)
-        # jz will be corresponding z index closest to jzi
-        jz = abs((df.z/zi).values - jzi).argmin()
-        # add z[jz] as attr in Gsave
-        Gsave.attrs[f"zr{j}"] = df.z.isel(z=jz).values
-        # loop over variables and calculate LCS
-        for var, vsave in zip(const_zr_varlist, const_zr_savelist):
-            # compute
-            Gsave[f"{vsave}{j}"] = LCS(df[var], None, zi, jzi)
-    # compute LCS for 2 variables at all heights
-    for pair, vsave in zip(all_zr_pairs, all_zr_savelist):
-        Gsave[vsave] = LCS(df[pair[0]], df[pair[1]])
+    # initialize empty Dataarray with same attrs as s
+    Gsave = xr.Dataset(data_vars=None, attrs=s.attrs)
+    # get number of files
+    nf = len(fall)
+    # list of all variables for averaging later
+    vavg = []
+    # begin looping over each file, one by one
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # calculate rotated u, v based on xy mean
+        uxy = d.u.mean(dim=("x","y"))
+        vxy = d.v.mean(dim=("x","y"))
+        angle = np.arctan2(vxy, uxy)
+        d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+        d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+        # calculate thetav
+        d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
+        # first calculate LCS for each value of z/zi and each variable
+        # begin loop over zzi
+        for j, jzi in enumerate(zzi_list):
+            # compute closest value of z/zi given jzi (jzi=value from 0-1)
+            # jz will be corresponding z index closest to jzi
+            jz = abs((d.z/s.h).values - jzi).argmin()
+            # add z[jz] as attr in Gsave (for first file only)
+            if jf == 0:
+                Gsave.attrs[f"zr{j}"] = d.z.isel(z=jz).values
+            # loop over variables and calculate LCS
+            for var, vsave in zip(const_zr_varlist, const_zr_savelist):
+                print(f"Computing LCS at one height: {vsave}")
+                # compute
+                # if this is first file, create new variable
+                if jf == 0:
+                    Gsave[f"{vsave}{j}"] = LCS(d[var], None, s.h.values, jzi)
+                    vavg.append(f"{vsave}{j}")
+                else:
+                    Gsave[f"{vsave}{j}"] += LCS(d[var], None, s.h.values, jzi)
+        # compute LCS for 2 variables at all heights
+        for pair, vsave in zip(all_zr_pairs, all_zr_savelist):
+            print(f"Computing LCS for 2 variables at all heights: {vsave}")
+            # if this is first file, create new variable
+            if jf == 0:
+                Gsave[vsave] = LCS(d[pair[0]], d[pair[1]])
+                vavg.append(vsave)
+            else:
+                Gsave[vsave] += LCS(d[pair[0]], d[pair[1]])
     # only keep positive frequencies
     Gsave = Gsave.where(Gsave.freq_x > 0., drop=True)
+    # average in time by dividing by number of files
+    for vs in vavg:
+        Gsave[vs] /= float(nf)
     # save file
     # check if rotate attr exists
-    if "rotate" in df.attrs.keys():
-        if bool(df.rotate):
+    if "rotate" in d.attrs.keys():
+        if bool(d.rotate):
             fsave = f"{dnc}G2_rot.nc"
         else:
             fsave = f"{dnc}G2.nc"
