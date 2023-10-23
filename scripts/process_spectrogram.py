@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: process_LCS.py
 # Author: Brian R. Greene
@@ -9,36 +9,27 @@
 # --------------------------------
 import sys
 sys.path.append("..")
-from LESutils import load_full
+import numpy as np
+from LESutils import load_stats
 from spec import spectrogram
 
 # list of simulations to consider
-slist = ["u15_tw10_qw04_dry3", "u15_tw10_qw04_moist4", 
-         "u10_tw20_qw08_dry2", "u01_tw03_qw01_dry3",
-         "u01_tw24_qw10_dry2", "u01_tw24_qw10_moist4",
-         "u15_tw10_qw01_dry", "u15_tw10_qw01_moist2",
-         "u10_tw20_qw02_dry", "u10_tw20_qw02_moist2"]
-# slist = ["u15_tw10_qw04_dry3", "u15_tw10_qw04_moist4",
-#          "u15_tw10_qw01_dry", "u15_tw10_qw01_moist2"]
-# slist = ["u10_tw20_qw08_dry2", "u01_tw03_qw01_dry3",
-#          "u01_tw24_qw10_dry2", "u01_tw24_qw10_moist4",
-#          "u10_tw20_qw02_dry", "u10_tw20_qw02_moist2"]
-
-dsim = "/home/bgreene/simulations/"
+slist = ["cr0.50_384", "cr1.00_384"]
+dsim = "/home/bgreene/simulations/SBL/"
 dncall = [f"{dsim}{name}/output/netcdf/" for name in slist]
 # simulation timesteps to consider
-t0 = 360000
-t1 = 432000
+t0 = 1080000
+t1 = 1260000
 dt = 1000
-delta_t = 0.05
-SBL = False
-use_q = True
-fstats = "mean_stats_xyt_5-6h.nc"
+delta_t = 0.02
+fstats = "mean_stats_xyt_9-10h.nc"
+timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
 
 # begin looping over simulations
 for dnc in dncall:
+    # determine filenames
+    fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
     # load data
-    df, s = load_full(dnc, t0, t1, dt, delta_t, SBL=SBL, 
-                      stats=fstats, rotate=True)
+    s = load_stats(dnc+fstats)
     # call spectrogram
-    spectrogram(dnc, df, detrend="constant", use_q=use_q)
+    spectrogram(dnc, fall, s, detrend="constant")

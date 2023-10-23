@@ -632,14 +632,17 @@ def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
     print(f"Finished processing conditional averaging on {cond_svar}_{hilo}")
     return
 # --------------------------------
-def calc_quadrant(dnc, df, var_pairs=[("u_rot","w"), ("theta","w")], 
+def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")], 
                   svarlist=["uw", "tw"]):
     """Purpose: Calculate quadrant components of given pairs of variables and
-    also calculate their mixing efficiences, eta
-    :param str dnc: directory for saving files
-    :param Dataset df: 4D xarray Dataset for analysis
-    :param list<str> var_pairs: list of variable pairs to calculate covars
-    :param list<str> svarlist: list of variable save names corresponding to varlist
+    also calculate their mixing efficiences, eta. Calc one file at a time.
+    -Inputs-
+    str dnc: directory for saving files
+    fall: list of all files to load for analysis
+    s: xr.Dataset, mean statistics file corresponding to fall
+    var_pairs: list of variable pairs to calculate covars
+    svarlist: list of variable save names corresponding to varlist
+    -Output-
     saves netcdf file in dnc
     """
     # get instantaneous perturbations for each unique variable in var_pairs
@@ -649,45 +652,85 @@ def calc_quadrant(dnc, df, var_pairs=[("u_rot","w"), ("theta","w")],
         for pp in p:
             if pp not in punique:
                 punique.append(pp)
-    # just store in dictionary
-    varp = {}
-    for var in punique:
-        varp[var] = df[var] - df[var].mean(dim=("x","y"))
-    # calculate four quadrants
     # initialize empty dataset for storing
     quad = xr.Dataset(data_vars=None,
-                      coords=dict(z=df.z),
-                      attrs=df.attrs)
-    # loop over variable pairs
-    for pair, vlab in zip(var_pairs, svarlist):
-        print(f"Calculating quadrant components for: {vlab}")
-        dat1 = varp[pair[0]]
-        dat2 = varp[pair[1]]
-        # dat1 > 0, dat2 > 0
-        d_pp = dat1.where(dat1 > 0.) * dat2.where(dat2 > 0.)
-        # dat1 > 0, dat2 < 0
-        d_pn = dat1.where(dat1 > 0.) * dat2.where(dat2 < 0.)
-        # dat1 < 0, dat2 > 0
-        d_np = dat1.where(dat1 < 0.) * dat2.where(dat2 > 0.)
-        # dat1 < 0, dat2 < 0
-        d_nn = dat1.where(dat1 < 0.) * dat2.where(dat2 < 0.)
-        # calculate means and store
-        quad[f"{vlab}_pp"] = d_pp.mean(dim=("time","x","y"), skipna=True)
-        quad[f"{vlab}_pn"] = d_pn.mean(dim=("time","x","y"), skipna=True)
-        quad[f"{vlab}_np"] = d_np.mean(dim=("time","x","y"), skipna=True)
-        quad[f"{vlab}_nn"] = d_nn.mean(dim=("time","x","y"), skipna=True)
-    print("Finished calculating quadrant components")
-    # begin calculating mixing efficiencies eta
+                      coords=dict(z=s.z),
+                      attrs=s.attrs)
+    # get number of files
+    nf = len(fall)
+    # list of all variables for averaging later
+    vavg = []
+    # begin looping over each file, one by one
+    for jf, ff in enumerate(fall):
+         # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # calculate rotated u, v based on xy mean
+        uxy = d.u.mean(dim=("x","y"))
+        vxy = d.v.mean(dim=("x","y"))
+        angle = np.arctan2(vxy, uxy)
+        d["u_rot"] = d.u*np.cos(angle) + d.v*np.sin(angle)
+        d["v_rot"] =-d.u*np.sin(angle) + d.v*np.cos(angle)
+        # calculate thetav
+        d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
+        # store necessary fields in dictionary (reset each new file)
+        varp = {}
+        for var in punique:
+            varp[var] = (d[var] - d[var].mean(dim=("x","y"))).compute()
+        # calculate four quadrants
+        # loop over variable pairs
+        for pair, vlab in zip(var_pairs, svarlist):
+            print(f"Calculating quadrant components for: {vlab}")
+            dat1 = varp[pair[0]]
+            dat2 = varp[pair[1]]
+            # dat1 > 0, dat2 > 0
+            d_pp = dat1.where(dat1 > 0.) * dat2.where(dat2 > 0.)
+            # dat1 > 0, dat2 < 0
+            d_pn = dat1.where(dat1 > 0.) * dat2.where(dat2 < 0.)
+            # dat1 < 0, dat2 > 0
+            d_np = dat1.where(dat1 < 0.) * dat2.where(dat2 > 0.)
+            # dat1 < 0, dat2 < 0
+            d_nn = dat1.where(dat1 < 0.) * dat2.where(dat2 < 0.)
+            # calculate means and store
+            # if this is first file, create new variable
+            if jf == 0:
+                quad[f"{vlab}_pp"] = d_pp.mean(dim=("x","y"), skipna=True)
+                quad[f"{vlab}_pn"] = d_pn.mean(dim=("x","y"), skipna=True)
+                quad[f"{vlab}_np"] = d_np.mean(dim=("x","y"), skipna=True)
+                quad[f"{vlab}_nn"] = d_nn.mean(dim=("x","y"), skipna=True)
+                vavg += [f"{vlab}_{jp}" for jp in ["pp", "pn", "np", "nn"]]
+            else:
+                quad[f"{vlab}_pp"] += d_pp.mean(dim=("x","y"), skipna=True)
+                quad[f"{vlab}_pn"] += d_pn.mean(dim=("x","y"), skipna=True)
+                quad[f"{vlab}_np"] += d_np.mean(dim=("x","y"), skipna=True)
+                quad[f"{vlab}_nn"] += d_nn.mean(dim=("x","y"), skipna=True)
+        print("Finished calculating quadrant components")
+        # begin calculating mixing efficiencies eta
+        for pair, vlab in zip(var_pairs, svarlist):
+            print(f"Calculating resolved covariance for: {vlab}")
+            # calculate full covariance between variable pair
+            # use detrended variables stored in varp
+            cov_res = xr.cov(varp[pair[0]], varp[pair[1]], dim=("x","y"))
+            # save this as individual variable to calculate full eta after
+            # time avg loop ends
+            if jf == 0:
+                quad[f"{vlab}_cov_res"] = cov_res
+                vavg.append(f"{vlab}_cov_res")
+            else:
+                quad[f"{vlab}_cov_res"] += cov_res
+    # outside of time loop
+    # calculate time avg by dividing everything by nf
+    for vs in vavg:
+        quad[vs] /= float(nf)
+    # now can calculate mixing efficiencies using full mean values
     for pair, vlab in zip(var_pairs, svarlist):
         print(f"Calculating mixing efficiency for: {vlab}")
-        # calculate full covariance between variable pair
-        # use detrended variables stored in varp
-        cov_res = xr.cov(varp[pair[0]], varp[pair[1]], dim=("time","x","y"))
         # NOTE: in SBL, all variables increase with height so will use
         # quadrants II and IV in denom; will need to change in future!
         # example: eta_uw = |<u'w'>| / |(<u-w+> + <u+w->)|
-        quad[f"eta_{vlab}"] = np.abs(cov_res) / np.abs(quad[f"{vlab}_np"] +\
-                                                       quad[f"{vlab}_pn"])
+        scov = f"{vlab}_cov_res"
+        quad[f"eta_{vlab}"] = np.abs(quad[scov]) / np.abs(quad[f"{vlab}_np"] +\
+                                                          quad[f"{vlab}_pn"])
     print("Finished calculating mixing efficiencies")
     # finally, calculate sum of quadrants
     for pair, vlab in zip(var_pairs, svarlist):
