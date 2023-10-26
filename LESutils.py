@@ -758,18 +758,9 @@ def load_stats(fstats):
     """
     print(f"Reading file: {fstats}")
     dd = xr.load_dataset(fstats)
-    # calculate ustar and h
+    # calculate ustar
     dd["ustar"] = ((dd.uw_cov_tot**2.) + (dd.vw_cov_tot**2.)) ** 0.25
     dd["ustar2"] = dd.ustar ** 2.
-    if dd.lbc == 0:
-        # dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
-        # use 1% threshold instead of 5%
-        dd["h"] = dd.z.where(dd.ustar2 <= 0.01*dd.ustar2[0], drop=True)[0] / 0.99
-    else:
-        # CBL
-        dd["h"] = dd.z.isel(z=dd.tw_cov_tot.argmin())
-    # save number of points within abl (z <= h)
-    dd.attrs["nzabl"] = dd.z.where(dd.z <= dd.h, drop=True).size
     # grab ustar0 and calc tstar0 for normalizing in plotting
     dd["ustar0"] = dd.ustar.isel(z=0)
     dd["tstar0"] = -dd.tw_cov_tot.isel(z=0)/dd.ustar0
@@ -787,6 +778,20 @@ def load_stats(fstats):
     dd["wdir"] = np.arctan2(-dd.u_mean, -dd.v_mean) * 180./np.pi
     jz_neg = np.where(dd.wdir < 0.)[0]
     dd["wdir"][jz_neg] += 360.
+    # calc ABL depth h
+    if dd.lbc == 0:
+        # dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
+        # use 1% threshold instead of 5%
+        # dd["h"] = dd.z.where(dd.ustar2 <= 0.01*dd.ustar2[0], drop=True)[0] / 0.99
+        # use FWHM of LLJ compared with Ug for h
+        dG = dd.uh.max() - 8.
+        dd["h"] = dd.z.where(dd.uh >= 8 + 0.5*dG, drop=True)[-1]
+    else:
+        # CBL
+        dd["h"] = dd.z.isel(z=dd.tw_cov_tot.argmin())
+    # save number of points within abl (z <= h)
+    dd.attrs["nzabl"] = dd.z.where(dd.z <= dd.h, drop=True).size
+
     # calculate mean lapse rate between lowest grid point and z=h
     delta_T = dd.theta_mean.sel(z=dd.h, method="nearest") - dd.theta_mean[0]
     delta_z = dd.z.sel(z=dd.h, method="nearest") - dd.z[0]
@@ -1068,26 +1073,21 @@ def timeseries2netcdf(dout, dnc, del_npz=False, **params):
 
     return
 # ---------------------------------------------
-def load_timeseries(dnc, detrend=True, tavg="1.0h"):
+def load_timeseries(dnc, detrend=True, tlab="1.0h", tuse=None):
     """Reading function for timeseries files created from timseries2netcdf()
     Load netcdf files using xarray and calculate numerous relevant parameters
     :param str dnc: path to netcdf directory for simulation
     :param bool detrend: detrend timeseries for calculating variances, default=True
-    :param str tavg: select which timeseries file to use in hours, default="1h"
+    :param str tavg: select which timeseries file to use in hours, default="1.0h"
+    :param float tuse: how many hours from the end to use, default=None
     :return d: xarray dataset
     """
     # load timeseries data
-    fts = f"timeseries_all_{tavg}.nc"
+    fts = f"timeseries_all_{tlab}.nc"
+    print(f"Reading file: {fts}")
     d = xr.open_dataset(dnc+fts)
     # calculate means
-    varlist = ["u", "v", "w", "theta"]
-    # check for humidity
-    if "q" in list(d.keys()):
-        varlist.append("q")
-        varlist.append("thetav")
-        use_q = True
-    else:
-        use_q = False
+    varlist = ["u", "v", "w", "theta", "q", "thetav"]
     for v in varlist:
         d[f"{v}_mean"] = d[v].mean("t") # average in time
     # rotate coords so <v> = 0
@@ -1105,6 +1105,7 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
         vdr = xrft.detrend(d.v_rot, dim="t", detrend_type="linear")
         wd = xrft.detrend(d.w, dim="t", detrend_type="linear")
         td = xrft.detrend(d.theta, dim="t", detrend_type="linear")
+        qd = xrft.detrend(d.q, dim="t", detrend_type="linear")
         # store these detrended variables
         d["ud"] = ud
         d["udr"] = udr
@@ -1112,6 +1113,7 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
         d["vdr"] = vdr
         d["wd"] = wd
         d["td"] = td
+        d["qd"] = qd
         # now calculate vars
         d["uu"] = ud * ud
         d["uur"] = udr * udr
@@ -1119,18 +1121,14 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
         d["vvr"] = vdr * vdr
         d["ww"] = wd * wd
         d["tt"] = td * td
+        d["qq"] = qd * qd
         # calculate "inst" covars
         d["uw"] = (ud * wd) + d.txz
         d["vw"] = (vd * wd) + d.tyz
-        d["tw"] = (td * wd) + d.q3
-        # do same with q variables
-        if use_q:
-            qd = xrft.detrend(d.q, dim="t", detrend_type="linear")
-            d["qd"] = qd
-            d["qq"] = qd * qd
-            d["qw"] = (qd * qd) + d.qw_sgs
-            d["tvw"] = d.tw + 0.61*d.td*d.qw/1000.
-            d["tq"] = td * qd
+        d["tw"] = (td * wd) + d.tw_sgs
+        d["qw"] = (qd * qd) + d.qw_sgs
+        d["tvw"] = d.tw + 0.61*d.td*d.qw/1000.
+        d["tq"] = td * qd
     else:
         d["uu"] = (d.u - d.u_mean) * (d.u - d.u_mean)
         d["uur"] = (d.u_rot - d.u_mean_rot) * (d.u_rot - d.u_mean_rot)
@@ -1138,18 +1136,26 @@ def load_timeseries(dnc, detrend=True, tavg="1.0h"):
         d["vvr"] = (d.v_rot - d.v_mean_rot) * (d.v_rot - d.v_mean_rot)
         d["ww"] = (d.w - d.w_mean) * (d.w - d.w_mean)
         d["tt"] = (d.theta - d.theta_mean) * (d.theta - d.theta_mean)
+        d["qq"] = (d.q - d.q_mean) * (d.q - d.q_mean)
         # calculate "inst" covars
         d["uw"] = (d.u - d.u_mean) * (d.w - d.w_mean) + d.txz
         d["vw"] = (d.v - d.v_mean) * (d.w - d.w_mean) + d.tyz
-        d["tw"] = (d.theta - d.theta_mean) * (d.w - d.w_mean) + d.q3
-        # do same for q
-        if use_q:
-            d["qq"] = (d.q - d.q_mean) * (d.q - d.q_mean)
-            d["qw"] = (d.q - d.q_mean) * (d.w - d.w_mean) + d.qw_sgs
-            d["tvw"] = d.tw + 0.61*(d.theta - d.theta_mean)*d.qw/1000.
-            d["tq"] = (d.q - d.q_mean) * (d.theta - d.theta_mean)
+        d["tw"] = (d.theta - d.theta_mean) * (d.w - d.w_mean) + d.tw_sgs
+        d["qw"] = (d.q - d.q_mean) * (d.w - d.w_mean) + d.qw_sgs
+        d["tvw"] = d.tw + 0.61*(d.theta - d.theta_mean)*d.qw/1000.
+        d["tq"] = (d.q - d.q_mean) * (d.theta - d.theta_mean)
     
-    return d
+    # return desired portion of timeseries files
+    if tuse is None:
+        return d
+    else:
+        # calculate number of points per hour
+        pph = d.t.size / d.total_time
+        # now can get starting time by multiplying tuse by pph
+        jtuse = -1 * int(tuse * pph)
+        # return just this range
+        return d.isel(t=range(jtuse, 0))
+
 # ---------------------------------------------
 @njit
 def interp_uas(dat, z_LES, z_UAS):

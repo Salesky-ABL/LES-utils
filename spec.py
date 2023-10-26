@@ -242,13 +242,7 @@ def amp_mod(dnc, ts, delta):
     # cutoff frequency from Taylor
     f_c = ts.u_mean_rot / delta
     # names of variables to loop over: first half are detrended
-    var_ts = ["udr", "vdr", "wd", "td", "uw", "tw"]
-    # check if moisture variables exist; if so, add those to list
-    if "qd" in list(ts.keys()):
-        var_ts += ["qd", "qw", "tq"]
-        use_q = True
-    else:
-        use_q = False
+    var_ts = ["udr", "vdr", "wd", "td", "qd", "uw", "tw", "qw", "tq"]
     # initialize empty dictionary to hold FFT timseries
     f_all = {}
     print("Lowpass filter signals to separate large and small scale components")
@@ -315,9 +309,7 @@ def amp_mod(dnc, ts, delta):
     # add delta as attr
     R.attrs["cutoff"] = delta
     # list of variable names for new save notation (can zip with var_ts to match)
-    vsave = ["u", "v", "w", "t", "uw", "tw"]
-    if use_q:
-        vsave += ["q", "qw", "tq"]
+    vsave = ["u", "v", "w", "t", "q", "uw", "tw", "qw", "tq"]
     # correlation between large scale u and filtered envelope of small-scale variable
     for vts, vv in zip(var_ts, vsave):
         key = f"ul_E{vv}"
@@ -331,10 +323,9 @@ def amp_mod(dnc, ts, delta):
         key = f"tl_E{vv}"
         R[key] = xr.corr(ts_l["td"], E_filt[vts], dim="t")
     # correlation between large scale q and filtered envelope of small-scale variable
-    if use_q:
-        for vts, vv in zip(var_ts, vsave):
-            key = f"ql_E{vv}"
-            R[key] = xr.corr(ts_l["qd"], E_filt[vts], dim="t")
+    for vts, vv in zip(var_ts, vsave):
+        key = f"ql_E{vv}"
+        R[key] = xr.corr(ts_l["qd"], E_filt[vts], dim="t")
         R.attrs["use_q"] = "True"
     # save file
     fsavenc = f"{dnc}AM_coefficients.nc"
