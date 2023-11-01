@@ -13,7 +13,7 @@ from LESutils import load_stats
 from spec import cond_avg
 
 # list of simulations to consider
-slist = ["cr0.50_384", "cr1.00_384"]
+slist = ["cr1.00_384"]
 dsim = "/home/bgreene/simulations/SBL/"
 dncall = [f"{dsim}{stab}/output/netcdf/" for stab in slist]
 # simulation timesteps to consider
@@ -38,7 +38,7 @@ for dnc in dncall:
     # grab values from s
     cond_scale = s.ustar0
     varscale_list = [s.ustar0, s.ustar0, s.tstar0]
-    cond_jz = abs((s.z/s.h).values - zzi).argmin()
+    cond_jz = abs((s.z/s.zj).values - zzi).argmin()
     # call cond_avg
     cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
              cond_scale, varlist, varscale_list, svarlist)
