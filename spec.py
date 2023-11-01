@@ -82,46 +82,82 @@ def autocorr_1d(dnc, df, detrend="constant"):
     print("Finished computing 1d autocorrelation functions!")
     return
 # --------------------------------
-def autocorr_2d(dnc, df, timeavg=True):
+def autocorr_2d(dnc, fall, s, timeavg=True):
     """Input 4D xarray Dataset with loaded LES data to calculate
     2d autocorrelation function in x-y planes, then average in
     time (if desired). Calculate for u, v, w, theta, u_rot, v_rot.
     Save netcdf file in dnc.
-
-    :param str dnc: absolute path to netcdf directory for saving new file
-    :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
-    :param bool timeavg: flag to average acf in time, default=True
+    -Input-
+    dnc: string, absolute path to netcdf directory for saving new file
+    fall: list of strings of all the files to be loaded one-by-one
+    s: xr.Dataset, stats file corresponding to simulation for attrs
+    timeavg: flag to average acf in time, default=True
     """
     # construct Dataset to save
-    Rsave = xr.Dataset(data_vars=None, attrs=df.attrs)
+    Rsave = xr.Dataset(data_vars=None, attrs=s.attrs)
     # variables to loop over for calculations
     vall = ["u", "v", "w", "theta", "u_rot", "v_rot"]
+    # get number of files
+    nf = len(fall)
+    # construct dictionary to hold instantaneous values if timeavg=False
+    Rsave2 = xr.Dataset(data_vars=None, attrs=s.attrs)
 
-    # loop over variables
-    for v in vall:
-        # grab data
-        din = df[v]
-        # subtract x,y mean
-        dfluc = xrft.detrend(din, dim=("x","y"), detrend_type="constant")
-        # normalize by standard deviation
-        dnorm = dfluc / dfluc.std(dim=("x","y"))
-        # calculate PSD using xrft
-        PSD = xrft.power_spectrum(dnorm, dim=("x","y"), true_phase=True, 
-                                  true_amplitude=True)
-        # take real part of ifft to return ACF
-        R = xrft.ifft(PSD, dim=("freq_x","freq_y"), true_phase=True, 
-                      true_amplitude=True, lag=(0,0)).real
-        # average in time if desired, then store in Rsave
-        if timeavg:
-            Rsave[v] = R.mean(dim=("time"))
-        else:
-            Rsave[v] = R
-    
+    # begin looping over each file and load one by one
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # loop over variables
+        for v in vall:
+            # grab data
+            din = d[v]
+            # subtract x,y mean
+            dfluc = xrft.detrend(din, dim=("x","y"), detrend_type="constant")
+            # normalize by standard deviation
+            dnorm = dfluc / dfluc.std(dim=("x","y"))
+            # calculate PSD using xrft
+            PSD = xrft.power_spectrum(dnorm, dim=("x","y"), true_phase=True, 
+                                    true_amplitude=True)
+            # take real part of ifft to return ACF
+            R = xrft.ifft(PSD, dim=("freq_x","freq_y"), true_phase=True, 
+                          true_amplitude=True, lag=(0,0)).real
+            # store in Rsave
+            # if this is the first file, create new data variable
+            if jf == 0:
+                Rsave[v] = R
+            # otherwise, add to existing array for averaging in time later
+            else:
+                Rsave[v] += R
+            # store values if not using timeavg
+            if ((not timeavg) & (jf == 0)):
+                temp = np.zeros((R.x.size, R.y.size, R.z.size, nf),
+                                dtype=np.float64)
+                # store R in temp
+                temp[:,:,:,jf] = R
+                # convert temp to DataArray, store in Rsave2
+                Rsave2[v][:,:,:,jf] = xr.DataArray(data=temp, 
+                                                   dims=("x","y","z","time"),
+                                                   coords=dict(x=R.x, y=R.y, z=R.z, 
+                                                               time=np.arange(nf)))
+            # store in Rinst if not using timeaverage
+            if ((not timeavg) & (jf >= 0)):
+                Rsave2[v][:,:,:,jf] = R
+
+    # average in time if desired, then store in Rsave
+    if timeavg:
+        for v in vall:
+            Rsave[v] /= float(nf)
     # save nc file
-    fsave = f"{dnc}R_2d.nc"
-    print(f"Saving file: {fsave}")
-    with ProgressBar():
-        Rsave.to_netcdf(fsave, mode="w")
+    if timeavg:
+        fsave = f"{dnc}R_2d.nc"
+        print(f"Saving file: {fsave}")
+        with ProgressBar():
+            Rsave.to_netcdf(fsave, mode="w")
+    else:
+        fsave = f"{dnc}R_2d_inst.nc"
+        print(f"Saving file: {fsave}")
+        with ProgressBar():
+            Rsave2.to_netcdf(fsave, mode="w")
     
     print("Finished computing 2d autocorrelation functions!")
     return
