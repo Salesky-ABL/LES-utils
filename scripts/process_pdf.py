@@ -1,18 +1,19 @@
 #!/glade/work/bgreene/conda-envs/LES/bin/python
 # --------------------------------
-# Name: process_condavg.py
+# Name: process_pdf.py
 # Author: Brian R. Greene
 # University of Oklahoma
-# Created: 8 June 2023
-# Purpose: loop over simulations and calculate conditional averages
-# using functions from LESutils and spec
+# Created: 8 November 2023
+# Purpose: loop over simulations and calculate 1d pdfs of u, w, theta
+# from functions in spec.py
 # --------------------------------
 import sys
 sys.path.append("..")
 import os
+import numpy as np
 from argparse import ArgumentParser
 from LESutils import load_stats
-from spec import cond_avg
+from spec import get_1d_hist
 
 # arguments for simulation directory to process
 parser = ArgumentParser()
@@ -30,21 +31,13 @@ t0 = 900000
 t1 = 1260000
 dt = 2000
 fstats = "mean_stats_xyt_8-10h.nc"
-use_rot = True
+timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
 
-# inputs to cond_avg
-cond_var = "u_rot"
-cond_thresh = -2.0
-zzi = 0.05
-varlist = ["u_rot", "w", "theta"]
-svarlist = ["u", "w", "t"]
-
+# list of z/zj values to process
+zzj = [0.1, 0.25, 0.5, 0.9]
+# determine filenames
+fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
 # load stats file
 s = load_stats(dnc+fstats)
-# grab values from s
-cond_scale = s.ustar0
-varscale_list = [s.ustar0, s.ustar0, s.tstar0]
-cond_jz = abs((s.z/s.zj).values - zzi).argmin()
-# call cond_avg
-cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
-         cond_scale, varlist, varscale_list, svarlist)
+# call get_1d_hist
+get_1d_hist(dnc, fall, s, s.zj, zzj)

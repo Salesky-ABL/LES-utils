@@ -1,4 +1,4 @@
-#!/home/bgreene/anaconda3/envs/LES/bin/python
+#!/glade/work/bgreene/conda-envs/LES/bin/python
 # --------------------------------
 # Name: spec.py
 # Author: Brian R. Greene
@@ -149,7 +149,7 @@ def autocorr_2d(dnc, fall, s, timeavg=True):
             Rsave[v] /= float(nf)
     # save nc file
     if timeavg:
-        fsave = f"{dnc}R_2d.nc"
+        fsave = f"{dnc}R_2d_8-10h.nc"
         print(f"Saving file: {fsave}")
         with ProgressBar():
             Rsave.to_netcdf(fsave, mode="w")
@@ -248,7 +248,7 @@ def spectrogram(dnc, fall, s, detrend="constant"):
     # check if rotate attr exists
     if "rotate" in d.attrs.keys():
         if bool(d.rotate):
-            fsave = f"{dnc}spectrogram_rot.nc"
+            fsave = f"{dnc}spectrogram_8-10h_rot.nc"
         else:
             fsave = f"{dnc}spectrogram.nc"
     else:
@@ -480,7 +480,7 @@ def nc_LCS(dnc, fall, s, zzi_list, const_zr_varlist, const_zr_savelist,
     # check if rotate attr exists
     if "rotate" in d.attrs.keys():
         if bool(d.rotate):
-            fsave = f"{dnc}G2_rot.nc"
+            fsave = f"{dnc}G2_8-10h_rot.nc"
         else:
             fsave = f"{dnc}G2.nc"
     else:
@@ -650,7 +650,7 @@ def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
     # threshold value
     dsave.attrs[f"alpha_{cond_svar}_{hilo}"] = alpha.values
     # save and return
-    fsave = f"{dnc}cond_avg_{cond_svar}_{hilo}.nc"
+    fsave = f"{dnc}cond_avg_{cond_svar}_{hilo}_8-10h.nc"
     # delete old file for saving new one
     if os.path.exists(fsave):
         os.system(f"rm {fsave}")
@@ -772,7 +772,7 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
     print("Finished calculating quadrant sums")
     # save quad Dataset as netcdf
     vlabs = "_".join(svarlist)
-    fsave = f"{dnc}{vlabs}_quadrant.nc"
+    fsave = f"{dnc}{vlabs}_quadrant_8-10h.nc"
     # delete old file for saving new one
     if os.path.exists(fsave):
         os.system(f"rm {fsave}")
@@ -781,6 +781,68 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
         quad.to_netcdf(fsave, mode="w")
     
     return
+# --------------------------------
+def get_1d_hist(dnc, fall, s, zref, jzref):
+    """Return 1 dimensional arrays of all perturbation values of: u_rot, w, theta
+    at input levels of z/zref (i.e., z/zi, z/zj). Return one netcdf file to use
+    for constructing pdfs and joint pdfs.
+    -Input-
+    dnc: directory for saving files
+    fall: list of all files to load for analysis
+    s: xr.Dataset, mean statistics file corresponding to fall
+    zref: reference height such as h or zj for normalizing z
+    jzref: list of values of z/zref to extract data from
+    -Output-
+    saves netcdf file in dnc
+    """
+    # define indices for values of z/zj
+    jz = [abs((s.z/zref).values - zzj).argmin() for zzj in jzref]
+    # loop through all files
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # calculate rotated u
+        uxy = d.u.mean(dim=("x","y"))
+        vxy = d.v.mean(dim=("x","y"))
+        angle = np.arctan2(vxy, uxy)
+        u = d.u*np.cos(angle) + d.v*np.sin(angle)
+        # grab other variables of interest: w, theta
+        w = d.w
+        theta = d.theta
+        # compute perturbations
+        up = u - u.mean(dim=("x","y"))
+        wp = w - w.mean(dim=("x","y"))
+        tp = theta - theta.mean(dim=("x","y"))
+        # collapse into 1d arrays at selected values of jz
+        ulong = up.isel(z=jz).stack(index=("x","y")).reset_index("index", drop=True)
+        wlong = wp.isel(z=jz).stack(index=("x","y")).reset_index("index", drop=True)
+        tlong = tp.isel(z=jz).stack(index=("x","y")).reset_index("index", drop=True)
+        # if this is the first file, create new array to hold all timesteps
+        if jf == 0:
+            uall = ulong
+            wall = wlong
+            tall = tlong
+        # otherwise, concatenate onto end along the "index" dimension
+        else:
+            uall = xr.concat([uall, ulong], dim="index")
+            wall = xr.concat([wall, wlong], dim="index")
+            tall = xr.concat([tall, tlong], dim="index")
+    # combine into Dataset
+    dsave = xr.Dataset()
+    dsave["u"] = uall
+    dsave["w"] = wall
+    dsave["theta"] = tall
+    # save values of z/zj in attrs
+    dsave.attrs["zzj"] = jzref
+    # save netcdf file
+    fsave = f"{dnc}u_w_theta_pdf_8-10h.nc"
+    print(f"Saving file: {fsave}")
+    dsave.to_netcdf(fsave, "w")
+    print("Finished running get_1d_hist()!")
+
+    return
+
 # --------------------------------
 def calc_lengthscale(dnc, R):
     """Input xarray Dataset with loaded autocorrelation data to

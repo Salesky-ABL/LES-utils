@@ -35,8 +35,8 @@ for sim in config["simlist"]:
                              ts2nc=config["ts2nc"],
                              del_remaining=config["del_remaining"])
     # update sims.yaml with resulting stats file
-    if fstats is not None:
-        update_log(dout+"netcdf/", fstats, config["d0"], "sims.yaml")
+    # if fstats is not None:
+        # update_log(dout+"netcdf/", fstats, config["d0"], "sims.yaml")
         
     print(f"Finished processing simulation: {sim}")
 
