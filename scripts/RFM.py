@@ -19,17 +19,19 @@ import xarray as xr
 from scipy.fft import fft, ifft, fft2, ifft2, fftfreq, fftshift
 from scipy.optimize import curve_fit
 from dask.diagnostics import ProgressBar
-from LESutils import load_full
+from LESutils import load_stats
 from spec import acf1d, calc_lengthscale
 # --------------------------------
 def calc_inst_var(d1, d2, SGS=None):
     """Calculate 'instantaneous' variance/covariance between 2 parameters
     plus optional SGS term by calculating perturbations (x,y) of d1, d2 then
     multiplying resulting fields
-    :param DataArray d1: parameter 1 to use
-    :param DataArray d2: parameter 2 to use
-    :param DataArray SGS: optional subgrid term to include
-    return single DataArray in (x,y,z) 
+    -Input-
+    d1: xr.DataArray, parameter 1 to use
+    d2: xr.DataArray, parameter 2 to use
+    SGS: xr.DataArray, optional subgrid term to include
+    -Output-
+    single DataArray in (x,y,z) 
     """
     d1p = (d1 - d1.mean(dim=("x","y"))).compute()
     d2p = (d2 - d2.mean(dim=("x","y"))).compute()
@@ -72,6 +74,8 @@ def calc_4_order(dnc, fall, s):
         # load file
         print(f"Loading file: {ff}")
         d = xr.load_dataset(ff)
+        # compute thetav
+        d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
         # begin by computing "instantaneous" variances and covariances, store in df
         print("Calculating 'instantaneous' variances and covariances")
         # use the calc_inst_var function
@@ -87,18 +91,16 @@ def calc_4_order(dnc, fall, s):
         tvw_sgs = d.tw_sgs + 0.61*d.thetav.isel(z=0).mean()*d.qw_sgs/1000.
         d["tvw"] = calc_inst_var(d.thetav, d.w, tvw_sgs)
         # need both rotated and unrotated to get wspd, wdir stats later
-        # use SGS TKE as subgrid contributions here
-        e23 = (2./3.) * d.e_sgs
         # u'u'
-        d["uu"] = calc_inst_var(d.u, d.u, e23)
+        d["uu"] = calc_inst_var(d.u, d.u)
         # u'u' rot
-        d["uur"] = calc_inst_var(d.u_rot, d.u_rot, e23)
+        d["uur"] = calc_inst_var(d.u_rot, d.u_rot)
         # v'v'
-        d["vv"] = calc_inst_var(d.v, d.v, e23)
+        d["vv"] = calc_inst_var(d.v, d.v)
         # v'v' rot
-        d["vvr"] = calc_inst_var(d.v_rot, d.v_rot, e23)
+        d["vvr"] = calc_inst_var(d.v_rot, d.v_rot)
         # w'w'
-        d["ww"] = calc_inst_var(d.w, d.w, e23)
+        d["ww"] = calc_inst_var(d.w, d.w)
         # t't'
         d["tt"] = calc_inst_var(d.theta, d.theta)
         # q'q'
@@ -235,9 +237,12 @@ def calc_4_order(dnc, fall, s):
 def construct_filter(delta_x, nx, Lx):
     """Construct filter transfer function: boxcar in physical space. Return
     as numpy array (can easily convert to xarray later)
-    :param np.array delta_x: array of filter widths for use with RFM
-    :param int nx: number of points in x-direction
-    :param float Lx: size of domain in x-direction
+    -Inputs-
+    delta_x: array of filter widths for use with RFM
+    nx: number of points in x-direction
+    Lx: size of domain in x-direction
+    -Output-
+    array of filter transfer functions at specified filter widths
     """
     nfilt = len(delta_x)
     # construct box filter transfer function
@@ -259,17 +264,15 @@ def construct_filter(delta_x, nx, Lx):
 def relaxed_filter(f, filt, delta_x):
     """Perform filtering of f over the range of filter widths within filt
     and calculate variances at each width. Return DataArray of resulting
+    -Inputs-
     y- and time-averaged variances.
-    :param DataArray f: 4d data to filter and calculate variances
-    :param array filt: filter transfer functions as shape(nfilt, nx)
-    :param array delta_x: array of filter widths associated with filt
+    f: xr.Dataset, 3d data to filter and calculate variances
+    filt: array of filter transfer functions as shape(nfilt, nx)
+    delta_x: array of filter widths associated with filt
     """
     # grab some dimensions
     nfilt = len(delta_x)
     nx, ny, nz = f.x.size, f.y.size, f.z.size
-    # define empty DataArray for returning later
-    var_f_all = xr.DataArray(data=np.zeros((nfilt, nz), dtype=np.float64),
-                             coords=dict(delta_x=delta_x, z=f.z))
     # forward FFT of f
     f_fft = xrft.fft(f, dim="x", true_phase=True, true_amplitude=True)
     # convert filt to DataArray
@@ -281,73 +284,88 @@ def relaxed_filter(f, filt, delta_x):
                                             dtype=np.complex128),
                               coords=dict(freq_x=f_fft.freq_x,
                                           y=f.y, z=f.z, delta_x=delta_x))   
-    # begin time loop
-    for jt in range(f.time.size):
-        for i in range(nfilt):
-            # multiply f_fft by filter function for filter width i
-            f_fft_filt[:,:,:,i] = f_fft.isel(time=jt) * filt.isel(delta_x=i)
-        # after looping over filter widths, calculate inverse fft on x-axis
-        f_ifft_filt = xrft.ifft(f_fft_filt, dim="freq_x", true_phase=True, 
-                                true_amplitude=True,
-                                lag=f_fft.freq_x.direct_lag)
-        var_f_all += f_ifft_filt.var(dim="x").mean(dim="y")
-    # divide by nt to get time-averaged sigma_f_all
-    # return
-    return var_f_all / float(f.time.size)
+    # begin loop over filter widths
+    for i in range(nfilt):
+        # multiply f_fft by filter function for filter width i
+        f_fft_filt[:,:,:,i] = f_fft * filt.isel(delta_x=i)
+    # after looping over filter widths, calculate inverse fft on x-axis
+    f_ifft_filt = xrft.ifft(f_fft_filt, dim="freq_x", true_phase=True, 
+                            true_amplitude=True,
+                            lag=f_fft.freq_x.direct_lag)
+    # compute variance along x, take mean in y, and return
+    return f_ifft_filt.var(dim="x").mean(dim="y").compute()
 # --------------------------------
-def calc_RFM_var(dnc, df, filt, delta_x):
+def calc_RFM_var(dnc, fall, s, filt, delta_x):
     """Calculate variances of parameters at each filter width delta_x.
     Save netcdf file in dnc.
-    :param str dnc: absolute path to netcdf directory for saving new file
-    :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
-    :param bool use_q: flag for including humidity variables in calculations
-    :param array filt: filter transfer functions as shape(nfilt, nx)
-    :param array delta_x: array of filter widths associated with filt    
+    -Inputs-
+    dnc: absolute path to netcdf directory for saving new file
+    fall: list of strings of all the files to be loaded one-by-one
+    filt: filter transfer functions as shape(nfilt, nx)
+    delta_x: array of filter widths associated with filt
+    -Output-
+    RFM.nc
     """
-    # begin by computing "instantaneous" variances and covariances, store in df
-    print("Calculating 'instantaneous' variances and covariances")
-    # use the calc_inst_var function
-    # u'w'
-    df["uw"] = calc_inst_var(df.u, df.w, df.txz)
-    # v'w'
-    df["vw"] = calc_inst_var(df.v, df.w, df.tyz)
-    # t'w'
-    df["tw"] = calc_inst_var(df.theta, df.w, df.tw_sgs)
-    # use SGS TKE as subgrid contributions here
-    e23 = (2./3.) * df.e_sgs
-    # u'u'
-    df["uu"] = calc_inst_var(df.u, df.u, e23)
-    # u'u' rot
-    df["uur"] = calc_inst_var(df.u_rot, df.u_rot, e23)
-    # v'v'
-    df["vv"] = calc_inst_var(df.v, df.v, e23)
-    # v'v' rot
-    df["vvr"] = calc_inst_var(df.v_rot, df.v_rot, e23)
-    # w'w'
-    df["ww"] = calc_inst_var(df.w, df.w, e23)
-    # t't'
-    df["tt"] = calc_inst_var(df.theta, df.theta)
-    # tv'tv'
-    df["tvtv"] = calc_inst_var(df.thetav, df.thetav)
-    # tv'w'
-    tvw_sgs = df.tw_sgs + 0.61*df.thetav.isel(z=0).mean()*df.qw_sgs/1000.
-    df["tvw"] = calc_inst_var(df.thetav, df.w, tvw_sgs)
-    # q'q'
-    df["qq"] = calc_inst_var(df.q, df.q)
-    # q'w'
-    df["qw"] = calc_inst_var(df.q, df.w, df.qw_sgs)
-    # initialize empty Dataset for autocorrs
-    RFMvar = xr.Dataset(data_vars=None, attrs=df.attrs)
-    # define list of parameters for looping
+    # initialize empty Dataset for RFM variances
+    RFMvar = xr.Dataset(data_vars=None, attrs=s.attrs)
+    # get number of files
+    nf = len(fall)
+    # define list of parameters for looping over for RFM
     vfilt = ["u", "u_rot", "v", "v_rot", "w", "theta", "thetav", "q",
              "uw", "vw", "tw", "qw", "tvw",
              "uu", "uur", "vv", "vvr", "ww", 
              "tt", "qq", "tvtv"]
-    # begin loop
-    for v in vfilt:
-        # use relaxed_filter and compute
-        print(f"Computing RFM for: {v}")
-        RFMvar[v] = relaxed_filter(df[v], filt, delta_x)
+    # begin looping over all files in fall
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)    
+        # calculate thetav
+        d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
+        # begin by computing "instantaneous" variances and covariances, store in f
+        print("Calculating 'instantaneous' variances and covariances")
+        # use the calc_inst_var function
+        # u'w'
+        d["uw"] = calc_inst_var(d.u, d.w, d.txz)
+        # v'w'
+        d["vw"] = calc_inst_var(d.v, d.w, d.tyz)
+        # t'w'
+        d["tw"] = calc_inst_var(d.theta, d.w, d.tw_sgs)
+        # u'u'
+        d["uu"] = calc_inst_var(d.u, d.u)
+        # u'u' rot
+        d["uur"] = calc_inst_var(d.u_rot, d.u_rot)
+        # v'v'
+        d["vv"] = calc_inst_var(d.v, d.v)
+        # v'v' rot
+        d["vvr"] = calc_inst_var(d.v_rot, d.v_rot)
+        # w'w'
+        d["ww"] = calc_inst_var(d.w, d.w)
+        # t't'
+        d["tt"] = calc_inst_var(d.theta, d.theta)
+        # tv'tv'
+        d["tvtv"] = calc_inst_var(d.thetav, d.thetav)
+        # tv'w'
+        tvw_sgs = d.tw_sgs + 0.61*d.thetav.isel(z=0).mean()*d.qw_sgs/1000.
+        d["tvw"] = calc_inst_var(d.thetav, d.w, tvw_sgs)
+        # q'q'
+        d["qq"] = calc_inst_var(d.q, d.q)
+        # q'w'
+        d["qw"] = calc_inst_var(d.q, d.w, d.qw_sgs)
+        # begin loop
+        for v in vfilt:
+            # use relaxed_filter and compute
+            print(f"Computing RFM for: {v}")
+            # if this is first file, create new variable
+            if jf == 0:
+                RFMvar[v] = relaxed_filter(d[v], filt, delta_x)
+            else:
+                RFMvar[v] += relaxed_filter(d[v], filt, delta_x)
+
+    # OUTSIDE LOOP
+    # average in time
+    for v in list(RFMvar.keys()):
+        RFMvar[v] /= float(nf)
     # save RFMvar
     fsaveRFM = f"{dnc}RFM.nc"
     if os.path.exists(fsaveRFM):
@@ -366,13 +384,17 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
     """Determine the coefficients C and p in the RFM power law
     based on the 2nd/4th-order variances and the RFM variances.
     Save netcdf files for C and p individually.
-    :param str dnc: directory for saving netcdf file
-    :param Dataset RFM_var: output from the RFM_var routine
-    :param Dataset var4: 4th order variances from calc_4_order
-    :param Dataset s: mean statistics (mainly for 2nd order var/cov)
-    :param list dx_fit_1: pair of values for min and max filter widths\
+    -Inputs-
+    dnc: directory for saving netcdf file
+    RFM_var: xr.Dataset, output from the RFM_var routine
+    var4: xr.Dataset, 4th order variances from calc_4_order
+    s: xr.Dataset, mean statistics (mainly for 2nd order var/cov)
+    dx_fit_1: pair of values for min and max filter widths\
         to fit power law on 1st order moments
-    :param list dx_fit_2: same as dx_fit_1 but for second order moments
+    dx_fit_2: same as dx_fit_1 but for second order moments
+    -Output-
+    fit_C.nc
+    fit_p.nc
     """
     # NOTE: only computing within the ABL! Grab indices here
     nzabl = s.nzabl
@@ -459,14 +481,18 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     C and p for the desired averaging times T1, T2 for 1st and 2nd order.
     For comparison, also calculate Lumley-Panofsky formulation.
     Save netcdf file in dnc.
-    :param str dnc: directory for saving netcdf file
-    :param float T1: averaging time of 1st order moments
-    :param float T2: averaging time of 2nd order moments
-    :param Dataset var4: 4th order variances from calc_4_order
-    :param Dataset s: mean statistics (mainly for 2nd order var/cov)
-    :param Dataset C: coefficients from fit_RFM
-    :param Dataset p: coefficients from fit_RFM
-    :param Dataset L: integral lengthscales to calc LP errors
+    -Input-
+    dnc: directory for saving netcdf file
+    T1: averaging time of 1st order moments
+    T2: averaging time of 2nd order moments
+    var4: 4th order variances from calc_4_order
+    s: mean statistics (mainly for 2nd order var/cov)
+    C: coefficients from fit_RFM
+    p: coefficients from fit_RFM
+    L: integral lengthscales to calc LP errors
+    -Output-
+    err.nc
+    err_LP.nc
     """
     # grab abl indices
     nzabl = s.nzabl
@@ -601,12 +627,25 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
 # --------------------------------
 # main loop
 if __name__ == "__main__":
-    dnc = "/home/bgreene/simulations/RFM/u01_tw24_qw10_256/"
-    dd, s = load_full(dnc, 450000, 540000, 1000, 0.04,
-                      "mean_stats_xyt_5-6h.nc", True)
-    
+    # home directory for data
+    # dnc = "/home/bgreene/simulations/RFM/u01_tw24_qw10_256/"
+    # dnc = "/home/bgreene/simulations/RFM/u09_tw24_qw10_256/"
+    # dnc = "/home/bgreene/simulations/RFM/u15_tw03_qw01_256/"
+    # dnc = "/home/bgreene/simulations/RFM/u15_tw10_qw04_256/"
+    dnc = "/home/bgreene/simulations/RFM/u15_tw24_qw10_256/"
+    # sim timesteps to consider
+    t0 = 450000
+    t1 = 540000
+    dt = 1000
+    fstats = "mean_stats_xyt_5-6h.nc"
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
+    # determine filenames
+    fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    # load stats file
+    s = load_stats(dnc+fstats)
+
     # calculate and load 4th order variances
-    # calc_4_order(dnc, dd)
+    calc_4_order(dnc, fall, s)
     # load again
     var4 = xr.load_dataset(dnc+"variances_4_order.nc")
     R = xr.load_dataset(dnc+"autocorr.nc")
@@ -614,12 +653,12 @@ if __name__ == "__main__":
     # filtering routines
     # define filter widths
     nfilt = 50 # yaml file later
-    delta_x = np.logspace(np.log10(dd.dx), np.log10(dd.Lx), 
+    delta_x = np.logspace(np.log10(s.dx), np.log10(s.Lx), 
                           num=nfilt, base=10.0, dtype=np.float64)
     # construct filter transfer function
-    filt = construct_filter(delta_x, dd.nx, dd.Lx)
+    filt = construct_filter(delta_x, s.nx, s.Lx)
     # call RFM
-    calc_RFM_var(dnc, dd, filt, delta_x)
+    calc_RFM_var(dnc, fall, s, filt, delta_x)
     # load back this data
     RFM_var = xr.load_dataset(dnc+"RFM.nc")
 
