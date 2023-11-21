@@ -19,7 +19,7 @@ from dask.diagnostics import ProgressBar
 # Begin Defining Functions
 # --------------------------------
 def acf1d(din, detrend="constant", poslags=False):
-    """Input 4D xarray DataArray and calculate acf in x-dim, average in y, time
+    """Input 3D xarray DataArray and calculate acf in x-dim, average in y
     Return DataArray(xlag, z)
 
     :param DataArray din: data to compute acf
@@ -39,14 +39,14 @@ def acf1d(din, detrend="constant", poslags=False):
     R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, 
                   lag=0).real
     # average in y and time
-    Ryt = R.mean(dim=("y","time"))
+    Ry = R.mean(dim=("y"))
     # check poslags
     if poslags:
-        return Ryt.where(Ryt.x >= 0., drop=True)
+        return Ry.where(Ry.x >= 0., drop=True)
     else:
-        return Ryt
+        return Ry
 
-def autocorr_1d(dnc, df, detrend="constant"):
+def autocorr_1d(dnc, fall, s, detrend="constant"):
     """Input 4D xarray Dataset with loaded LES data to calculate
     autocorrelation function along x-direction, then average in
     y and time. Calculate for u, v, w, theta, u_rot, v_rot.
@@ -58,23 +58,35 @@ def autocorr_1d(dnc, df, detrend="constant"):
         default="constant" (also accepts "linear")
     """
     # construct Dataset to save
-    Rsave = xr.Dataset(data_vars=None, attrs=df.attrs)
+    Rsave = xr.Dataset(data_vars=None, attrs=s.attrs)
     # add additional attr for detrend_first
     Rsave.attrs["detrend_type"] = str(detrend)
-
+    # get number of files
+    nf = len(fall)
     # variables to loop over for calculations
-    vall = ["u", "v", "w", "theta", "u_rot", "v_rot"]
-    # check to see if q in list of keys
-    if "q" in list(df.keys()):
-        vall.append("q")
+    vall = ["u", "v", "w", "theta", "u_rot", "v_rot", "q"]
 
-    # loop over variables
+    # begin looping over each file and load one by one
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # loop over variables
+        for v in vall:
+            # call acf1d
+            R = acf1d(d[v], detrend=detrend)
+            # if this is the first file, create new data variable
+            if jf == 0:
+                Rsave[v] = R
+            # otherwise, add to existing array for averaging in time later
+            else:
+                Rsave[v] += R
+    # compute time average
     for v in vall:
-        # call acf1d, store in Rsave
-        Rsave[v] = acf1d(df[v], detrend=detrend)
-    
+        Rsave[v] /= float(nf)
+
     # save nc file
-    fsave = f"{dnc}R_1d.nc"
+    fsave = f"{dnc}R_1d_8-10h.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         Rsave.to_netcdf(fsave, mode="w")
@@ -83,7 +95,7 @@ def autocorr_1d(dnc, df, detrend="constant"):
     return
 # --------------------------------
 def autocorr_2d(dnc, fall, s, timeavg=True):
-    """Input 4D xarray Dataset with loaded LES data to calculate
+    """Input list of files to compute the
     2d autocorrelation function in x-y planes, then average in
     time (if desired). Calculate for u, v, w, theta, u_rot, v_rot.
     Save netcdf file in dnc.
@@ -662,7 +674,7 @@ def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
     return
 # --------------------------------
 def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")], 
-                  svarlist=["uw", "tw"]):
+                  svarlist=["uw", "tw"], hole_factor=None):
     """Purpose: Calculate quadrant components of given pairs of variables and
     also calculate their mixing efficiences, eta. Calc one file at a time.
     -Inputs-
@@ -671,6 +683,8 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
     s: xr.Dataset, mean statistics file corresponding to fall
     var_pairs: list of variable pairs to calculate covars
     svarlist: list of variable save names corresponding to varlist
+    hole_factor: float, proportion of the xy-mean relative covar to use as\
+        a filter theshold for including in quadrant means, default=None
     -Output-
     saves netcdf file in dnc
     """
@@ -721,6 +735,13 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
             d_np = dat1.where(dat1 < 0.) * dat2.where(dat2 > 0.)
             # dat1 < 0, dat2 < 0
             d_nn = dat1.where(dat1 < 0.) * dat2.where(dat2 < 0.)
+            # apply hole_factor
+            if hole_factor is not None:
+                d1d2 = (dat1 * dat2).mean(dim=("x","y")).compute()
+                d_pp = d_pp.where(abs(d_pp) >= hole_factor*abs(d1d2))
+                d_pn = d_pn.where(abs(d_pn) >= hole_factor*abs(d1d2))
+                d_np = d_np.where(abs(d_np) >= hole_factor*abs(d1d2))
+                d_nn = d_nn.where(abs(d_nn) >= hole_factor*abs(d1d2))
             # calculate means and store
             # if this is first file, create new variable
             if jf == 0:
@@ -740,7 +761,16 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
             print(f"Calculating resolved covariance for: {vlab}")
             # calculate full covariance between variable pair
             # use detrended variables stored in varp
-            cov_res = xr.cov(varp[pair[0]], varp[pair[1]], dim=("x","y"))
+            dat1 = varp[pair[0]]
+            dat2 = varp[pair[1]]
+            # multiply together
+            d1d2 = dat1 * dat2
+            # compute cov_res by averaging in xy
+            cov_res = d1d2.mean(dim=("x","y")).compute()
+            # use hole_factor if it exists and override
+            if hole_factor is not None:
+                d1d2 = d1d2.where(abs(d1d2) >= hole_factor*abs(cov_res))
+                cov_res = d1d2.mean(dim=("x","y"), skipna=True)
             # save this as individual variable to calculate full eta after
             # time avg loop ends
             if jf == 0:
@@ -772,7 +802,13 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
     print("Finished calculating quadrant sums")
     # save quad Dataset as netcdf
     vlabs = "_".join(svarlist)
-    fsave = f"{dnc}{vlabs}_quadrant_8-10h.nc"
+    if hole_factor is not None:
+        # add hole_factor as attr
+        quad.attrs["hole_factor"] = hole_factor
+        # add as part of name
+        fsave = f"{dnc}{vlabs}_quadrant_H{hole_factor:.1f}_8-10h.nc"
+    else:
+        fsave = f"{dnc}{vlabs}_quadrant_8-10h.nc"
     # delete old file for saving new one
     if os.path.exists(fsave):
         os.system(f"rm {fsave}")
@@ -875,8 +911,7 @@ def calc_lengthscale(dnc, R):
         # store LL in Lsave
         Lsave[var] = xr.DataArray(data=LL, coords=dict(z=R.z))
     # save file and return
-
-    fsave = f"{dnc}lengthscale.nc"
+    fsave = f"{dnc}lengthscale_8-10h.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         Lsave.to_netcdf(fsave, mode="w")
