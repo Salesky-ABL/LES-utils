@@ -1,4 +1,4 @@
-#!/glade/work/bgreene/conda-envs/LES/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: RFM.py
 # Author: Brian R. Greene
@@ -29,115 +29,187 @@ def calc_inst_var(d1, d2, SGS=None):
     :param DataArray d1: parameter 1 to use
     :param DataArray d2: parameter 2 to use
     :param DataArray SGS: optional subgrid term to include
-    return single DataArray in (time,x,y,z) 
+    return single DataArray in (x,y,z) 
     """
-    d1p = d1 - d1.mean(dim=("x","y"))
-    d2p = d2 - d2.mean(dim=("x","y"))
+    d1p = (d1 - d1.mean(dim=("x","y"))).compute()
+    d2p = (d2 - d2.mean(dim=("x","y"))).compute()
     d1d2_cov = d1p * d2p
     if SGS is not None:
         return d1d2_cov + SGS
     else:
         return d1d2_cov
 # --------------------------------
-def calc_4_order(dnc, df):
+def calc_4_order(dnc, fall, s):
     """Calculate 4th-order variances (u'w'u'w', u'u'u'u', etc.) for use
     in fitting RFM curves as well as computing LP errors later.
     Also calculate 1d autocorrelation function for _all_ parameters here. 
     Save netcdf file in dnc.
-    :param str dnc: absolute path to netcdf directory for saving new file
-    :param Dataset df: 4d (time,x,y,z) xarray Dataset for calculating
+    -Inputs-
+    dnc: string, absolute path to netcdf directory for saving new file
+    fall: list of strings of all desired filenames to load/process
+    s: xr.Dataset, mean stats file corresponding to fall
+    -Output-
+    Saves the following files:
+    variances_4_order.nc
+    autocorr.nc
     """
-    # begin by computing "instantaneous" variances and covariances, store in df
-    print("Calculating 'instantaneous' variances and covariances")
-    # use the calc_inst_var function
-    # u'w'
-    df["uw"] = calc_inst_var(df.u, df.w, df.txz)
-    # v'w'
-    df["vw"] = calc_inst_var(df.v, df.w, df.tyz)
-    # t'w'
-    df["tw"] = calc_inst_var(df.theta, df.w, df.tw_sgs)
-    # q'w'
-    df["qw"] = calc_inst_var(df.q, df.w, df.qw_sgs)
-    # tv'w'
-    tvw_sgs = df.tw_sgs + 0.61*df.thetav.isel(z=0).mean()*df.qw_sgs/1000.
-    df["tvw"] = calc_inst_var(df.thetav, df.w, tvw_sgs)
-    # need both rotated and unrotated to get wspd, wdir stats later
-    # use SGS TKE as subgrid contributions here
-    e23 = (2./3.) * df.e_sgs
-    # u'u'
-    df["uu"] = calc_inst_var(df.u, df.u, e23)
-    # u'u' rot
-    df["uur"] = calc_inst_var(df.u_rot, df.u_rot, e23)
-    # v'v'
-    df["vv"] = calc_inst_var(df.v, df.v, e23)
-    # v'v' rot
-    df["vvr"] = calc_inst_var(df.v_rot, df.v_rot, e23)
-    # w'w'
-    df["ww"] = calc_inst_var(df.w, df.w, e23)
-    # t't'
-    df["tt"] = calc_inst_var(df.theta, df.theta)
-    # q'q'
-    df["qq"] = calc_inst_var(df.q, df.q)
-    # tv'tv'
-    df["tvtv"] = calc_inst_var(df.thetav, df.thetav)
-    #
-    # Using instantaneous vars/covars, calculate inst 4th order variances
-    #
-    print("Calculating 4th order variances")
-    # u'w'u'w'
-    df["uwuw"] = calc_inst_var(df.uw, df.uw)
-    # v'w'v'w'
-    df["vwvw"] = calc_inst_var(df.vw, df.vw)
-    # t'w't'w'
-    df["twtw"] = calc_inst_var(df.tw, df.tw)
-    # u'u'u'u'
-    df["uuuu"] = calc_inst_var(df.uu, df.uu)
-    # u'u'u'u' rot
-    df["uuuur"] = calc_inst_var(df.uur, df.uur)
-    # v'v'v'v'
-    df["vvvv"] = calc_inst_var(df.vv, df.vv)
-    # v'v'v'v' rot
-    df["vvvvr"] = calc_inst_var(df.vvr, df.vvr)
-    # w'w'w'w'
-    df["wwww"] = calc_inst_var(df.ww, df.ww)
-    # t't't't'
-    df["tttt"] = calc_inst_var(df.tt, df.tt)
-    # q'w'q'w'
-    df["qwqw"] = calc_inst_var(df.qw, df.qw)
-    # q'q'q'q'
-    df["qqqq"] = calc_inst_var(df.qq, df.qq)
-    # tv'tv'tv'tv'
-    df["tvtvtvtv"] = calc_inst_var(df.tvtv, df.tvtv)
-    # tv'w'tv'w'
-    df["tvwtvw"] = calc_inst_var(df.tvw, df.tvw)
-    # define new Dataset to hold all the mean 4th order variances
-    var4 = xr.Dataset(data_vars=None, coords=dict(z=df.z), attrs=df.attrs)
-    # u'w'u'w' = var{u'w'} = (u'w' - <u'w'>_xyt)**2
-    var4["uwuw_var"] = df.uwuw.mean(dim=("time","x","y"))
-    # v'w'v'w'
-    var4["vwvw_var"] = df.vwvw.mean(dim=("time","x","y"))
-    # t'w't'w'
-    var4["twtw_var"] = df.twtw.mean(dim=("time","x","y"))
-    # u'u'u'u'
-    var4["uuuu_var"] = df.uuuu.mean(dim=("time","x","y"))
-    # u'u'u'u' rot
-    var4["uuuur_var"] = df.uuuur.mean(dim=("time","x","y"))
-    # v'v'v'v'
-    var4["vvvv_var"] = df.vvvv.mean(dim=("time","x","y"))
-    # v'v'v'v' rot
-    var4["vvvvr_var"] = df.vvvvr.mean(dim=("time","x","y"))
-    # w'w'w'w'
-    var4["wwww_var"] = df.wwww.mean(dim=("time","x","y"))
-    # t't't't'
-    var4["tttt_var"] = df.tttt.mean(dim=("time","x","y"))
-    # q'w'q'w'
-    var4["qwqw_var"] = df.qwqw.mean(dim=("time","x","y"))
-    # q'q'q'q'
-    var4["qqqq_var"] = df.qqqq.mean(dim=("time","x","y"))
-    # tv'tv'tv'tv'
-    var4["tvtvtvtv_var"] = df.tvtvtvtv.mean(dim=("time","x","y"))
-    # tv'w'tv'w'
-    var4["tvwtvw_var"] = df.tvwtvw.mean(dim=("time","x","y"))
+    # initialize empty Dataset for 4-order variances
+    var4 = xr.Dataset(data_vars=None, attrs=s.attrs)
+    # initialize empty Dataset for autocorrs
+    R = xr.Dataset(data_vars=None, attrs=s.attrs)
+    # get number of files
+    nf = len(fall)
+    # define list of parameters for looping over for autocorrelations
+    vacf = ["u", "u_rot", "v", "v_rot", "w", "theta",
+            "thetav", "q",
+            "uw", "vw", "tw",
+            "uu", "uur", "vv", "vvr", "ww", "tt", "tvtv", "qq",
+            "uwuw", "vwvw", "twtw", "tvwtvw", "qwqw",
+            "uuuu", "uuuur", "vvvv", "vvvvr", "wwww", 
+            "tttt", "tvtvtvtv", "qqqq"]
+    # begin looping over all files in fall
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # begin by computing "instantaneous" variances and covariances, store in df
+        print("Calculating 'instantaneous' variances and covariances")
+        # use the calc_inst_var function
+        # u'w'
+        d["uw"] = calc_inst_var(d.u, d.w, d.txz)
+        # v'w'
+        d["vw"] = calc_inst_var(d.v, d.w, d.tyz)
+        # t'w'
+        d["tw"] = calc_inst_var(d.theta, d.w, d.tw_sgs)
+        # q'w'
+        d["qw"] = calc_inst_var(d.q, d.w, d.qw_sgs)
+        # tv'w'
+        tvw_sgs = d.tw_sgs + 0.61*d.thetav.isel(z=0).mean()*d.qw_sgs/1000.
+        d["tvw"] = calc_inst_var(d.thetav, d.w, tvw_sgs)
+        # need both rotated and unrotated to get wspd, wdir stats later
+        # use SGS TKE as subgrid contributions here
+        e23 = (2./3.) * d.e_sgs
+        # u'u'
+        d["uu"] = calc_inst_var(d.u, d.u, e23)
+        # u'u' rot
+        d["uur"] = calc_inst_var(d.u_rot, d.u_rot, e23)
+        # v'v'
+        d["vv"] = calc_inst_var(d.v, d.v, e23)
+        # v'v' rot
+        d["vvr"] = calc_inst_var(d.v_rot, d.v_rot, e23)
+        # w'w'
+        d["ww"] = calc_inst_var(d.w, d.w, e23)
+        # t't'
+        d["tt"] = calc_inst_var(d.theta, d.theta)
+        # q'q'
+        d["qq"] = calc_inst_var(d.q, d.q)
+        # tv'tv'
+        d["tvtv"] = calc_inst_var(d.thetav, d.thetav)
+        #
+        # Using instantaneous vars/covars, calculate inst 4th order variances
+        #
+        print("Calculating 4th order variances")
+        # u'w'u'w'
+        d["uwuw"] = calc_inst_var(d.uw, d.uw)
+        # v'w'v'w'
+        d["vwvw"] = calc_inst_var(d.vw, d.vw)
+        # t'w't'w'
+        d["twtw"] = calc_inst_var(d.tw, d.tw)
+        # u'u'u'u'
+        d["uuuu"] = calc_inst_var(d.uu, d.uu)
+        # u'u'u'u' rot
+        d["uuuur"] = calc_inst_var(d.uur, d.uur)
+        # v'v'v'v'
+        d["vvvv"] = calc_inst_var(d.vv, d.vv)
+        # v'v'v'v' rot
+        d["vvvvr"] = calc_inst_var(d.vvr, d.vvr)
+        # w'w'w'w'
+        d["wwww"] = calc_inst_var(d.ww, d.ww)
+        # t't't't'
+        d["tttt"] = calc_inst_var(d.tt, d.tt)
+        # q'w'q'w'
+        d["qwqw"] = calc_inst_var(d.qw, d.qw)
+        # q'q'q'q'
+        d["qqqq"] = calc_inst_var(d.qq, d.qq)
+        # tv'tv'tv'tv'
+        d["tvtvtvtv"] = calc_inst_var(d.tvtv, d.tvtv)
+        # tv'w'tv'w'
+        d["tvwtvw"] = calc_inst_var(d.tvw, d.tvw)
+        # compute fourth order variances by computing mean of "inst" vars
+        # if this is first file, create new variable in var4
+        # otherwise, add to existing (will divide by total files later)
+        if jf == 0:
+            # u'w'u'w' = var{u'w'} = (u'w' - <u'w'>_xyt)**2
+            var4["uwuw_var"] = d.uwuw.mean(dim=("x","y")).compute()
+            # v'w'v'w'
+            var4["vwvw_var"] = d.vwvw.mean(dim=("x","y")).compute()
+            # t'w't'w'
+            var4["twtw_var"] = d.twtw.mean(dim=("x","y")).compute()
+            # u'u'u'u'
+            var4["uuuu_var"] = d.uuuu.mean(dim=("x","y")).compute()
+            # u'u'u'u' rot
+            var4["uuuur_var"] = d.uuuur.mean(dim=("x","y")).compute()
+            # v'v'v'v'
+            var4["vvvv_var"] = d.vvvv.mean(dim=("x","y")).compute()
+            # v'v'v'v' rot
+            var4["vvvvr_var"] = d.vvvvr.mean(dim=("x","y")).compute()
+            # w'w'w'w'
+            var4["wwww_var"] = d.wwww.mean(dim=("x","y")).compute()
+            # t't't't'
+            var4["tttt_var"] = d.tttt.mean(dim=("x","y")).compute()
+            # q'w'q'w'
+            var4["qwqw_var"] = d.qwqw.mean(dim=("x","y")).compute()
+            # q'q'q'q'
+            var4["qqqq_var"] = d.qqqq.mean(dim=("x","y")).compute()
+            # tv'tv'tv'tv'
+            var4["tvtvtvtv_var"] = d.tvtvtvtv.mean(dim=("x","y")).compute()
+            # tv'w'tv'w'
+            var4["tvwtvw_var"] = d.tvwtvw.mean(dim=("x","y")).compute()
+        else:
+            # u'w'u'w' = var{u'w'} = (u'w' - <u'w'>_xyt)**2
+            var4["uwuw_var"] += d.uwuw.mean(dim=("x","y")).compute()
+            # v'w'v'w'
+            var4["vwvw_var"] += d.vwvw.mean(dim=("x","y")).compute()
+            # t'w't'w'
+            var4["twtw_var"] += d.twtw.mean(dim=("x","y")).compute()
+            # u'u'u'u'
+            var4["uuuu_var"] += d.uuuu.mean(dim=("x","y")).compute()
+            # u'u'u'u' rot
+            var4["uuuur_var"] += d.uuuur.mean(dim=("x","y")).compute()
+            # v'v'v'v'
+            var4["vvvv_var"] += d.vvvv.mean(dim=("x","y")).compute()
+            # v'v'v'v' rot
+            var4["vvvvr_var"] += d.vvvvr.mean(dim=("x","y")).compute()
+            # w'w'w'w'
+            var4["wwww_var"] += d.wwww.mean(dim=("x","y")).compute()
+            # t't't't'
+            var4["tttt_var"] += d.tttt.mean(dim=("x","y")).compute()
+            # q'w'q'w'
+            var4["qwqw_var"] += d.qwqw.mean(dim=("x","y")).compute()
+            # q'q'q'q'
+            var4["qqqq_var"] += d.qqqq.mean(dim=("x","y")).compute()
+            # tv'tv'tv'tv'
+            var4["tvtvtvtv_var"] += d.tvtvtvtv.mean(dim=("x","y")).compute()
+            # tv'w'tv'w'
+            var4["tvwtvw_var"] += d.tvwtvw.mean(dim=("x","y")).compute()
+        #
+        # calculate autocorrelations for everything
+        #
+        print("Begin calculating autocorrelations...")
+        # loop over all variables in vacf
+        for v in vacf:
+            # use acf1d and compute
+            # if this is first file, create new variable
+            if jf == 0:
+                R[v] = acf1d(d[v], detrend="constant", poslags=True)
+            else:
+                R[v] += acf1d(d[v], detrend="constant", poslags=True)
+
+    # OUTSIDE BIG LOOP
+    # finish up var4 data
+    # loop over variables in var4 and average in time by dividing by number of files
+    for v in list(var4.keys()):
+        var4[v] /= float(nf)
     # save file
     fsaveV = f"{dnc}variances_4_order.nc"
     if os.path.exists(fsaveV):
@@ -146,24 +218,10 @@ def calc_4_order(dnc, df):
     with ProgressBar():
         var4.to_netcdf(fsaveV, mode="w")
 
-    #
-    # calculate autocorrelations for everything
-    #
-    print("Begin calculating autocorrelations...")
-    # initialize empty Dataset for autocorrs
-    R = xr.Dataset(data_vars=None, attrs=df.attrs)
-    # define list of parameters for looping
-    vacf = ["u", "u_rot", "v", "v_rot", "w", "theta",
-            "thetav", "q",
-            "uw", "vw", "tw",
-            "uu", "uur", "vv", "vvr", "ww", "tt", "tvtv", "qq",
-            "uwuw", "vwvw", "twtw", "tvwtvw", "qwqw",
-            "uuuu", "uuuur", "vvvv", "vvvvr", "wwww", 
-            "tttt", "tvtvtvtv", "qqqq"]
-    # begin loop
-    for v in vacf:
-        # use acf1d and compute
-        R[v] = acf1d(df[v], detrend="constant", poslags=True)
+    # finish up autocorr data
+    # loop over variables in R and average in time
+    for v in list(R.keys()):
+        R[v] /= float(nf)
     # save file
     fsaveR = f"{dnc}autocorr.nc"
     if os.path.exists(fsaveR):
@@ -543,12 +601,12 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
 # --------------------------------
 # main loop
 if __name__ == "__main__":
-    dnc = "/glade/scratch/bgreene/CBL/u15_tw03_qw01_256/output/netcdf/"
+    dnc = "/home/bgreene/simulations/RFM/u01_tw24_qw10_256/"
     dd, s = load_full(dnc, 450000, 540000, 1000, 0.04,
                       "mean_stats_xyt_5-6h.nc", True)
     
     # calculate and load 4th order variances
-    calc_4_order(dnc, dd)
+    # calc_4_order(dnc, dd)
     # load again
     var4 = xr.load_dataset(dnc+"variances_4_order.nc")
     R = xr.load_dataset(dnc+"autocorr.nc")
