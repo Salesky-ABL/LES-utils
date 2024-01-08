@@ -14,29 +14,31 @@
 # with batch jobs on supercomputers with multiple successive runs
 # --------------------------------
 # name of directory with raw output files
-# d0: /glade/scratch/bgreene/CBL/
-d0: /glade/derecho/scratch/bgreene/CBL/
+d0: /glade/scratch/bgreene/CBL/
+# d0: /glade/derecho/scratch/bgreene/CBL/
 # log file name
 flog: sims.yaml
 # list of simulation names
-# simlist: [u15_tw03_qw01_256, u15_tw10_qw04_256, u15_tw24_qw10_256]
-simlist: [u01_tw24_qw10_256, u09_tw24_qw10_256]
+simlist: [u12_tw03_qw05_dry, u12_tw03_qw05_dry2, u12_tw03_qw05_dry3,
+          u12_tw03_qw05_drymax, u08_tw03_qw05_dry, u08_tw03_qw05_dry2,
+          u08_tw03_qw05_dry3, u08_tw03_qw05_drymax, u04_tw03_qw05_dry,
+          u04_tw03_qw05_dry2, u04_tw03_qw05_dry3, u04_tw03_qw05_drymax]
 # label to give stats file that matchs nhr
 nhr_s: 5-6h
 # number of hours from end to process
 nhr: 1
 # organize file output first?
-organize: False
+organize: True
 # number of batch jobs, if applicable
 nrun: 6
 # delete raw output files?
-del_raw: False
+del_raw: True
 # overwrite old files if they exist?
 overwrite: False
 # compute stats?
-cstats: False
+cstats: True
 # rotate coordinates?
-rotate: True
+rotate: False
 # compute timeseries files?
 ts2nc: False
 # delete remaining raw files?
