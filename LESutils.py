@@ -467,7 +467,6 @@ def calc_stats(f_use=None, nhr=None, **params):
     # construct dnc
     # dnc = f"{params['path']}output/netcdf/"
     dnc = params["dnc"]
-
     # option 1: f_use is not None
     if f_use is not None:
         fall = f_use
@@ -481,21 +480,6 @@ def calc_stats(f_use=None, nhr=None, **params):
         fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
     # get length of file list
     nf = len(fall)
-    # calculate array of times represented by each file
-    times = np.array([i*params["dt"]*params["nwrite"] for i in range(nf)])
-    # --------------------------------
-    # Load files and clean up
-    # --------------------------------
-    print("Reading files...")
-    dd = xr.open_mfdataset(fall, combine="nested", concat_dim="time")
-    dd.coords["time"] = times
-    dd.time.attrs["units"] = "s"
-    # --------------------------------
-    # Calculate statistics
-    # --------------------------------
-    print("Beginning calculations")
-    # create empty dataset that will hold everything
-    dd_stat = xr.Dataset(data_vars=None, coords=dict(z=dd.z), attrs=dd.attrs)
     # list of base variables
     base = ["u", "v", "w", "theta", "q", "dissip", "p"]
     # use for looping over vars in case dissip not used
@@ -503,58 +487,102 @@ def calc_stats(f_use=None, nhr=None, **params):
     # list of remaining variables to average over
     base2 = ["txx", "txy", "txz", "tyy", "tyz", "tzz", 
              "tw_sgs", "qw_sgs", "e_sgs"]
-    # calculate means
-    for s in base+base2:
-        dd_stat[f"{s}_mean"] = dd[s].mean(dim=("time", "x", "y"))
-    # calculate covars
-    # u'w'
-    dd_stat["uw_cov_res"] = xr.cov(dd.u, dd.w, dim=("time", "x", "y"))
-    dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd_stat.txz_mean
-    # v'w'
-    dd_stat["vw_cov_res"] = xr.cov(dd.v, dd.w, dim=("time", "x", "y"))
-    dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd_stat.tyz_mean
-    # theta'w'
-    dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("time", "x", "y"))
-    dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
-    # q'w'
-    dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("time","x","y"))
-    dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
-    # calculate thetav
-    dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
-    dd_stat["thetav_mean"] = dd.thetav.mean(dim=("time","x","y"))
-    # tvw_cov_tot from tw_cov_tot and qw_cov_tot
-    dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
-        0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
-    # calculate vars
-    for s in base1:
-        # detrend by subtracting planar averages at each timestep
-        vp = dd[s] - dd[s].mean(dim=("x","y"))
-        dd_stat[f"{s}_var"] = vp.var(dim=("time","x","y"))
+    # create empty dataset that will hold everything
+    dd_stat = xr.Dataset(data_vars=None)
+    # --------------------------------
+    # Begin looping over files and load one by one
+    # --------------------------------
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        dd = xr.load_dataset(ff)
+        # --------------------------------
+        # Calculate statistics
+        # --------------------------------
+        # calculate means
+        for s in base+base2:
+            # if this is first file, create new data variable
+            if jf == 0:
+                dd_stat[f"{s}_mean"] = dd[s].mean(dim=("x","y"))
+            # otherwise, add to existing array for averaging in time later
+            else:
+                dd_stat[f"{s}_mean"] += dd[s].mean(dim=("x","y"))
+        # calculate covars
+        if jf == 0:
+            # u'w'
+            dd_stat["uw_cov_res"] = xr.cov(dd.u, dd.w, dim=("x","y"))
+            dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd_stat.txz_mean
+            # v'w'
+            dd_stat["vw_cov_res"] = xr.cov(dd.v, dd.w, dim=("x","y"))
+            dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd_stat.tyz_mean
+            # theta'w'
+            dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("x","y"))
+            dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
+            # q'w'
+            dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("x","y"))
+            dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
+            # calculate thetav
+            dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
+            dd_stat["thetav_mean"] = dd.thetav.mean(dim=("x","y"))
+            # tvw_cov_tot from tw_cov_tot and qw_cov_tot
+            dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
+                0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
+        else:
+            # u'w'
+            dd_stat["uw_cov_res"] += xr.cov(dd.u, dd.w, dim=("x","y"))
+            dd_stat["uw_cov_tot"] += dd_stat.uw_cov_res + dd_stat.txz_mean
+            # v'w'
+            dd_stat["vw_cov_res"] += xr.cov(dd.v, dd.w, dim=("x","y"))
+            dd_stat["vw_cov_tot"] += dd_stat.vw_cov_res + dd_stat.tyz_mean
+            # theta'w'
+            dd_stat["tw_cov_res"] += xr.cov(dd.theta, dd.w, dim=("x","y"))
+            dd_stat["tw_cov_tot"] += dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
+            # q'w'
+            dd_stat["qw_cov_res"] += xr.cov(dd.q, dd.w, dim=("x","y"))
+            dd_stat["qw_cov_tot"] += dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
+            # calculate thetav
+            dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
+            dd_stat["thetav_mean"] += dd.thetav.mean(dim=("x","y"))
+            # tvw_cov_tot from tw_cov_tot and qw_cov_tot
+            dd_stat["tvw_cov_tot"] += dd_stat.tw_cov_tot +\
+                0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
+        # calculate vars
+        for s in base1:
+            if jf == 0:
+                dd_stat[f"{s}_var"] = dd[s].var(dim=("x","y"))
+            else:
+                dd_stat[f"{s}_var"] += dd[s].var(dim=("x","y"))
+        # rotate instantaneous u and v for variances
+        # (not sure if necessary by commutative property but might as well)
+        angle_inst = np.arctan2(dd.v.mean(dim=("x","y")), dd.u.mean(dim=("x","y")))
+        u_rot = dd.u*np.cos(angle_inst) + dd.v*np.sin(angle_inst)
+        v_rot =-dd.u*np.sin(angle_inst) + dd.v*np.cos(angle_inst)
+        if jf == 0:
+            dd_stat["u_var_rot"] = u_rot.var(dim=("x","y"))
+            dd_stat["v_var_rot"] = v_rot.var(dim=("x","y"))
+        else:
+            dd_stat["u_var_rot"] += u_rot.var(dim=("x","y"))
+            dd_stat["v_var_rot"] += v_rot.var(dim=("x","y"))
+        # calculate <theta'q'>
+        if jf == 0:
+            dd_stat["tq_cov_res"] = xr.cov(dd.theta, dd.q, dim=("x","y"))
+        else:
+            dd_stat["tq_cov_res"] += xr.cov(dd.theta, dd.q, dim=("x","y"))
+    # --------------------------------
+    # OUTSIDE LOOP
+    # --------------------------------
+    # divide all variables by nf to average in time
+    dd_stat /= float(nf)
     # rotate u_mean and v_mean so <v> = 0
     angle = np.arctan2(dd_stat.v_mean, dd_stat.u_mean)
     dd_stat["u_mean_rot"] = dd_stat.u_mean*np.cos(angle) + dd_stat.v_mean*np.sin(angle)
     dd_stat["v_mean_rot"] =-dd_stat.u_mean*np.sin(angle) + dd_stat.v_mean*np.cos(angle)
-    # rotate instantaneous u and v for variances 
-    # (not sure if necessary by commutative property but might as well)
-    angle_inst = np.arctan2(dd.v.mean(dim=("x","y")), dd.u.mean(dim=("x","y")))
-    u_rot = dd.u*np.cos(angle_inst) + dd.v*np.sin(angle_inst)
-    v_rot =-dd.u*np.sin(angle_inst) + dd.v*np.cos(angle_inst)
-    # recalculate u_var_rot, v_var_rot
-    uvar_rot = u_rot - u_rot.mean(dim=("x","y"))
-    dd_stat["u_var_rot"] = uvar_rot.var(dim=("time","x","y"))
-    vvar_rot = v_rot - v_rot.mean(dim=("x","y"))
-    dd_stat["v_var_rot"] = vvar_rot.var(dim=("time","x","y"))
-    # calculate <theta'q'>
-    td = dd.theta - dd.theta.mean(dim=("x","y"))
-    qd = dd.q - dd.q.mean(dim=("x","y"))
-    dd_stat["tq_cov_res"] = xr.cov(td, qd, dim=("time","x","y"))
     # --------------------------------
     # Add attributes
     # --------------------------------
+    dd_stat.attrs = dd.attrs
     # grid spacing
     dd_stat.attrs["delta"] = (dd.dx * dd.dy * dd.dz) ** (1./3.)
-    # calculate number of hours in average based on timesteps array
-    dd_stat.attrs["tavg"] = times[-1] / 3600.
     # --------------------------------
     # Save output file
     # --------------------------------
@@ -568,183 +596,6 @@ def calc_stats(f_use=None, nhr=None, **params):
         if params["return_fstats"]:
             return fsave.split(os.sep)[-1]
 
-    return
-# ---------------------------------------------
-def calc_stats_long(dnc, t0, t1, dt, delta_t, use_dissip, use_q, tavg, rotate):
-    """Read multiple output netcdf files created by sim2netcdf() to calculate
-    averages in x, y, t and save as new netcdf file. Identical in scope as
-    calc_stats(), but sacrifices xarray syntax simplicity for the sake of
-    memory management.
-
-    :param str dnc: absolute path to directory for loading netCDF files
-    :param int t0: first timestep to process
-    :param int t1: last timestep to process
-    :param int dt: number of timesteps between files to load
-    :param float delta_t: dimensional timestep in simulation (seconds)
-    :param bool use_dissip: flag for loading dissipation rate files (SBL only)
-    :param bool use_q: flag for loading specific humidity files (les_brg only)
-    :param str tavg: label denoting length of temporal averaging (e.g. 1h)
-    :param bool rotate: flag for using rotated fields
-    """
-    # directories and configuration
-    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
-     # determine files to read from timesteps
-    if rotate:
-        fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
-    else:
-        fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
-    nf = len(fall)
-    # calculate array of times represented by each file
-    times = np.array([i*delta_t*dt for i in range(nf)])
-    # --------------------------------
-    # Load one file for attrs
-    # --------------------------------
-    d1 = xr.load_dataset(fall[0])
-    # --------------------------------
-    # Calculate statistics
-    # --------------------------------
-    print("Beginning calculations")
-    # create empty dataset that will hold everything
-    # will average in time after big loop
-    dd_long = xr.Dataset()
-    # list of base variables
-    base = ["u", "v", "w", "theta"]
-    base1 = ["u", "v", "w", "theta"] # use for looping over vars in case dissip not used
-    # check for dissip
-    if use_dissip:
-        base.append("dissip")
-    if use_q:
-        base.append("q")
-        base1.append("q")
-    # initialize empty arrays in dd_long for values in base, base1
-    for s in base:
-        dd_long[f"{s}_mean"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                            coords=dict(z=d1.z))
-    dd_long["thetav_mean"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                          coords=dict(z=d1.z))
-    dd_long["u_mean_rot"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    dd_long["v_mean_rot"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    # covars
-    # u'w'
-    dd_long["uw_cov_res"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    dd_long["uw_cov_sgs"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    # v'w'
-    dd_long["vw_cov_res"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    dd_long["vw_cov_sgs"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    # theta'w'
-    dd_long["tw_cov_res"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    dd_long["tw_cov_sgs"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    dd_long["tq_cov_res"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                         coords=dict(z=d1.z))
-    if use_q:
-        # q'w'
-        dd_long["qw_cov_res"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                             coords=dict(z=d1.z))
-        dd_long["qw_cov_sgs"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                             coords=dict(z=d1.z))
-
-        dd_long["thetav_mean"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                              coords=dict(z=d1.z))
-    # vars
-    for s in base1:
-        dd_long[f"{s}_var"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                           coords=dict(z=d1.z))
-    dd_long["u_var_rot"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                        coords=dict(z=d1.z))
-    dd_long["v_var_rot"] = xr.DataArray(data=np.zeros((d1.nz), dtype=np.float64),
-                                        coords=dict(z=d1.z))
-    #
-    # big loop over time
-    #
-    for jt, ff in enumerate(fall):
-        # only open one file at a time
-        print(f"Calculating stats for file {jt+1}/{nf}")
-        d = xr.load_dataset(ff)
-        # calculate means
-        for s in base:
-            dd_long[f"{s}_mean"] += d[s].mean(dim=("x","y"))
-        # calculate covars
-        # u'w'
-        dd_long["uw_cov_res"] += xr.cov(d.u, d.w, dim=("x","y"))
-        dd_long["uw_cov_sgs"] += d.txz.mean(dim=("x","y"))
-        # v'w'
-        dd_long["vw_cov_res"] += xr.cov(d.v, d.w, dim=("x","y"))
-        dd_long["vw_cov_sgs"] += d.tyz.mean(dim=("x","y"))
-        # theta'w'
-        dd_long["tw_cov_res"] += xr.cov(d.theta, d.w, dim=("x","y"))
-        dd_long["tw_cov_sgs"] += d.q3.mean(dim=("x","y"))
-        if use_q:
-            # q'w'
-            dd_long["qw_cov_res"] += xr.cov(d.q, d.w, dim=("x","y"))
-            dd_long["qw_cov_sgs"] += d.wq_sgs.mean(dim=("x","y"))
-            # calculate thetav
-            tv = d.theta * (1. + 0.61*d.q/1000.)
-            dd_long["thetav_mean"] += tv.mean(dim=("x","y"))
-            # also take the chance to calculate <theta'q'>
-            dd_long["tq_cov_res"] += xr.cov(d.theta, d.q, dim=("x","y"))
-        # calculate vars
-        for s in base1:
-            vp = d[s] - d[s].mean(dim=("x","y"))
-            dd_long[f"{s}_var"] += vp.var(dim=("x","y"))
-        # rotate u_mean and v_mean so <v> = 0
-        angle = np.arctan2(d.v.mean(dim=("x","y")), d.u.mean(dim=("x","y")))
-        u_rot = d.u*np.cos(angle) + d.v*np.sin(angle)
-        v_rot =-d.u*np.sin(angle) + d.v*np.cos(angle)
-        # calculate and store mean, var
-        dd_long["u_mean_rot"] += u_rot.mean(dim=("x","y"))
-        dd_long["v_mean_rot"] += v_rot.mean(dim=("x","y"))
-        upr = u_rot - u_rot.mean(dim=("x","y"))
-        dd_long["u_var_rot"] += upr.var(dim=("x","y"))
-        vpr = v_rot - v_rot.mean(dim=("x","y"))
-        dd_long["v_var_rot"] += vpr.var(dim=("x","y"))
-        
-    # --------------------------------
-    # outside of big time loop
-    # --------------------------------
-    # average over number of timesteps (nf)
-    print("Averaging in time...")
-    # define empty Dataset for saving
-    dd_save = xr.Dataset()
-    # loop over all variables in dd_long and divide by nf
-    for s in list(dd_long.keys()):
-        dd_save[s] = dd_long[s] / float(nf)
-    print("Calculating and storing additional parameters...")
-    # combine resolved and sgs to get tot profiles
-    dd_save["uw_cov_tot"] = dd_save.uw_cov_res + dd_save.uw_cov_sgs
-    dd_save["vw_cov_tot"] = dd_save.vw_cov_res + dd_save.vw_cov_sgs
-    dd_save["tw_cov_tot"] = dd_save.tw_cov_res + dd_save.tw_cov_sgs
-    if use_q:
-        dd_save["qw_cov_tot"] = dd_save.qw_cov_res + dd_save.qw_cov_sgs
-        # tvw_cov_tot from tw_cov_tot and qw_cov_tot
-        dd_save["tvw_cov_tot"] = dd_save.tw_cov_tot +\
-                0.61 * dd_save.thetav_mean[0] * dd_save.qw_cov_tot/1000.
-    # --------------------------------
-    # Add attributes
-    # --------------------------------
-    # copy from dd
-    dd_save.attrs = d1.attrs
-    dd_save.attrs["delta"] = (d1.dx * d1.dy * d1.dz) ** (1./3.)
-    # calculate number of hours in average based on timesteps array
-    dd_save.attrs["tavg"] = delta_t * (t1 - t0) / 3600.
-    # --------------------------------
-    # Save output file
-    # --------------------------------
-    if rotate:
-        fsave = f"{dnc}mean_stats_xyt_{tavg}_rot.nc"
-    else:
-        fsave = f"{dnc}mean_stats_xyt_{tavg}.nc"
-    print(f"Saving file: {fsave}")
-    with ProgressBar():
-        dd_save.to_netcdf(fsave, mode="w")
-    print("Finished!")
     return
 # ---------------------------------------------
 def load_stats(fstats):
