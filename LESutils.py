@@ -481,7 +481,7 @@ def calc_stats(f_use=None, nhr=None, **params):
     # get length of file list
     nf = len(fall)
     # list of base variables
-    base = ["u", "v", "w", "theta", "q", "dissip", "p"]
+    base = ["u", "v", "w", "theta", "q", "dissip", "p", "thetav"]
     # use for looping over vars in case dissip not used
     base1 = ["u", "v", "w", "theta", "q", "thetav"]
     # list of remaining variables to average over
@@ -499,6 +499,8 @@ def calc_stats(f_use=None, nhr=None, **params):
         # --------------------------------
         # Calculate statistics
         # --------------------------------
+        # calculate thetav
+        dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
         # calculate means
         for s in base+base2:
             # if this is first file, create new data variable
@@ -511,41 +513,21 @@ def calc_stats(f_use=None, nhr=None, **params):
         if jf == 0:
             # u'w'
             dd_stat["uw_cov_res"] = xr.cov(dd.u, dd.w, dim=("x","y"))
-            dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd_stat.txz_mean
             # v'w'
             dd_stat["vw_cov_res"] = xr.cov(dd.v, dd.w, dim=("x","y"))
-            dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd_stat.tyz_mean
             # theta'w'
             dd_stat["tw_cov_res"] = xr.cov(dd.theta, dd.w, dim=("x","y"))
-            dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
             # q'w'
             dd_stat["qw_cov_res"] = xr.cov(dd.q, dd.w, dim=("x","y"))
-            dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
-            # calculate thetav
-            dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
-            dd_stat["thetav_mean"] = dd.thetav.mean(dim=("x","y"))
-            # tvw_cov_tot from tw_cov_tot and qw_cov_tot
-            dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
-                0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
         else:
             # u'w'
             dd_stat["uw_cov_res"] += xr.cov(dd.u, dd.w, dim=("x","y"))
-            dd_stat["uw_cov_tot"] += dd_stat.uw_cov_res + dd_stat.txz_mean
             # v'w'
             dd_stat["vw_cov_res"] += xr.cov(dd.v, dd.w, dim=("x","y"))
-            dd_stat["vw_cov_tot"] += dd_stat.vw_cov_res + dd_stat.tyz_mean
             # theta'w'
             dd_stat["tw_cov_res"] += xr.cov(dd.theta, dd.w, dim=("x","y"))
-            dd_stat["tw_cov_tot"] += dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
             # q'w'
             dd_stat["qw_cov_res"] += xr.cov(dd.q, dd.w, dim=("x","y"))
-            dd_stat["qw_cov_tot"] += dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
-            # calculate thetav
-            dd["thetav"] = dd.theta * (1. + 0.61*dd.q/1000.)
-            dd_stat["thetav_mean"] += dd.thetav.mean(dim=("x","y"))
-            # tvw_cov_tot from tw_cov_tot and qw_cov_tot
-            dd_stat["tvw_cov_tot"] += dd_stat.tw_cov_tot +\
-                0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
         # calculate vars
         for s in base1:
             if jf == 0:
@@ -573,6 +555,13 @@ def calc_stats(f_use=None, nhr=None, **params):
     # --------------------------------
     # divide all variables by nf to average in time
     dd_stat /= float(nf)
+    # now can compute total fluxes with sgs components
+    dd_stat["uw_cov_tot"] = dd_stat.uw_cov_res + dd_stat.txz_mean
+    dd_stat["vw_cov_tot"] = dd_stat.vw_cov_res + dd_stat.tyz_mean
+    dd_stat["tw_cov_tot"] = dd_stat.tw_cov_res + dd_stat.tw_sgs_mean
+    dd_stat["qw_cov_tot"] = dd_stat.qw_cov_res + dd_stat.qw_sgs_mean
+    dd_stat["tvw_cov_tot"] = dd_stat.tw_cov_tot +\
+                0.61 * dd_stat.thetav_mean[0] * dd_stat.qw_cov_tot/1000.
     # rotate u_mean and v_mean so <v> = 0
     angle = np.arctan2(dd_stat.v_mean, dd_stat.u_mean)
     dd_stat["u_mean_rot"] = dd_stat.u_mean*np.cos(angle) + dd_stat.v_mean*np.sin(angle)
