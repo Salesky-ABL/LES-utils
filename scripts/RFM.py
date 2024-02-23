@@ -12,11 +12,11 @@
 import os
 import sys
 sys.path.append("..")
-import yaml
 import xrft
 import numpy as np
 import xarray as xr
-from scipy.fft import fft, ifft, fft2, ifft2, fftfreq, fftshift
+from argparse import ArgumentParser
+from scipy.fft import fftshift
 from scipy.optimize import curve_fit
 from dask.diagnostics import ProgressBar
 from LESutils import load_stats
@@ -64,7 +64,7 @@ def calc_4_order(dnc, fall, s):
     # define list of parameters for looping over for autocorrelations
     vacf = ["u", "u_rot", "v", "v_rot", "w", "theta",
             "thetav", "q",
-            "uw", "vw", "tw",
+            "uw", "vw", "tw", "qw", "tvw",
             "uu", "uur", "vv", "vvr", "ww", "tt", "tvtv", "qq",
             "uwuw", "vwvw", "twtw", "tvwtvw", "qwqw",
             "uuuu", "uuuur", "vvvv", "vvvvr", "wwww", 
@@ -380,7 +380,7 @@ def power_law(delta_x, C, p):
     # function to be used with curve_fit
     return C * (delta_x ** (-p))
 # --------------------------------
-def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
+def fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2):
     """Determine the coefficients C and p in the RFM power law
     based on the 2nd/4th-order variances and the RFM variances.
     Save netcdf files for C and p individually.
@@ -388,6 +388,7 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
     dnc: directory for saving netcdf file
     RFM_var: xr.Dataset, output from the RFM_var routine
     var4: xr.Dataset, 4th order variances from calc_4_order
+    L: xr.Dataset, integral lengthscales
     s: xr.Dataset, mean statistics (mainly for 2nd order var/cov)
     dx_fit_1: pair of values for min and max filter widths\
         to fit power law on 1st order moments
@@ -411,11 +412,6 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
     vvar2 = ["uwuw_var", "vwvw_var", "twtw_var", "uuuu_var", "uuuur_var",
              "vvvv_var", "vvvvr_var", "wwww_var", "tttt_var", "qwqw_var", "qqqq_var",
              "tvtvtvtv_var", "tvwtvw_var"]
-    # grab delta_x ranges based on dx_fit_1 and dx_fit_2
-    ix1 = np.where((RFM_var.delta_x >= dx_fit_1[0]) &\
-                   (RFM_var.delta_x <= dx_fit_1[1]))[0]
-    ix2 = np.where((RFM_var.delta_x >= dx_fit_2[0]) &\
-                   (RFM_var.delta_x <= dx_fit_2[1]))[0]
     # loop through first order moments
     for v, var in zip(vRFM1, vvar1):
         print(f"Calculating power law coefficients for: {v}")
@@ -426,9 +422,12 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
                             coords=dict(z=zabl))
         # loop over heights within abl
         for jz in range(nzabl):
+            # grab delta_x ranges based on dx_fit_1 and dx_fit_2
+            ix1 = np.where((RFM_var.delta_x / L[v].isel(z=jz) >= dx_fit_1[0]) &\
+                           (RFM_var.delta_x / L[v].isel(z=jz) <= dx_fit_1[1]))[0]
             # grab ranges of data for fitting
             # x: delta_x
-            xfit = RFM_var.delta_x.isel(delta_x=ix1)
+            xfit = RFM_var.delta_x.isel(delta_x=ix1) / L[v].isel(z=jz)
             # y: filtered variance / ensemble variance
             yfit = RFM_var[v].isel(z=jz, delta_x=ix1) / s[var].isel(z=jz)
             # fit x and y to power law
@@ -446,9 +445,11 @@ def fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2):
                             coords=dict(z=zabl))
         # loop over heights within abl
         for jz in range(nzabl):
+            ix2 = np.where((RFM_var.delta_x / L[v].isel(z=jz) >= dx_fit_2[0]) &\
+                           (RFM_var.delta_x / L[v].isel(z=jz) <= dx_fit_2[1]))[0]
             # grab ranges of data for fitting
             # x: delta_x
-            xfit = RFM_var.delta_x.isel(delta_x=ix2)
+            xfit = RFM_var.delta_x.isel(delta_x=ix2) / L[v].isel(z=jz)
             # y: filtered variance / ensemble variance
             yfit = RFM_var[v].isel(z=jz, delta_x=ix2) / var4[var].isel(z=jz)
             # fit x and y to power law
@@ -521,8 +522,9 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     for v, var, avg in zip(vRFM1, vvar1, vavg1):
         print(f"Computing errors for: {v}")
         # use values of C and p to extrapolate calculation of MSE/var{x}
-        # renormalize with variances in vvar1
-        MSE[v] = s[var].isel(z=range(nzabl)) * (C[v] * (X1**-p[v]))
+        # renormalize with variances in vvar1, Lengthscales in vRFM1
+        X1_L = X1 / L[v].isel(z=range(nzabl))
+        MSE[v] = s[var].isel(z=range(nzabl)) * (C[v] * (X1_L**-p[v]))
         # take sqrt to get RMSE
         RMSE = np.sqrt(MSE[v])
         # divide by <x> to get epsilon (relative random error)
@@ -531,8 +533,9 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     for v, var, avg in zip(vRFM2, vvar2, vavg2):
         print(f"Computing errors for: {v}")
         # use values of C and p to extrapolate calculation of MSE/var{x}
-        # renormalize with variances in vvar1
-        MSE[v] = var4[var].isel(z=range(nzabl)) * (C[v] * (X2**-p[v]))
+        # renormalize with variances in vvar1, Lengthscales in vRFM2
+        X2_L = X2 / L[v].isel(z=range(nzabl))
+        MSE[v] = var4[var].isel(z=range(nzabl)) * (C[v] * (X2_L**-p[v]))
         # take sqrt to get RMSE
         RMSE = np.sqrt(MSE[v])
         # divide by <x> to get epsilon (relative random error)
@@ -623,6 +626,76 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
         err_LP.to_netcdf(fsave_LP, mode="w")
     
     return
+# --------------------------------
+def recalc_err_array(Tnew, var4, s, C, p, L):
+    """Calculate the relative random errors given the RFM coefficients
+    C and p for a range of desired averaging times T.
+    This will only process the following 1st order moments:
+    u, v, theta, q, thetav
+    -Input-
+    Tnew: array of averaging time of 1st order moments
+    var4: 4th order variances from calc_4_order
+    s: mean statistics (mainly for 2nd order var/cov)
+    C: coefficients from fit_RFM
+    p: coefficients from fit_RFM
+    L: integral lengthscales
+    -Output-
+    err: xr.Dataset
+    """
+    # grab abl indices
+    nzabl = s.nzabl
+    # create xarray Datasets for MSE and err
+    MSE = xr.Dataset(data_vars=None, 
+                     coords=dict(z=C.z, Tsample=Tnew), 
+                     attrs=C.attrs)
+    err = xr.Dataset(data_vars=None, 
+                     coords=dict(z=C.z, Tsample=Tnew), 
+                     attrs=C.attrs)
+    # 1st order - vars from stat file
+    vRFM1 = ["u", "v", "theta", "q", "thetav"]
+    vvar1 = ["u_var", "v_var", "theta_var", "q_var", "thetav_var"]
+    vavg1 = ["u_mean", "v_mean", "theta_mean", "q_mean", "thetav_mean"]
+    # Begin calculating errors
+    # Start with 1st order
+    for v, var, avg in zip(vRFM1, vvar1, vavg1):
+        print(f"Computing errors for: {v}")
+        # create temp MSE DataArray
+        MSE[v] = xr.DataArray(data=np.zeros((nzabl, len(Tnew)), 
+                                            dtype=np.float64),
+                              coords=dict(err.coords))
+        # loop over Tnew to calculate MSE(z,Tsample)
+        for jt, iT in enumerate(Tnew):
+            # use Taylor hypothesis to convert time to space
+            X1 = s.uh.isel(z=range(nzabl)) * iT
+            # use values of C and p to extrapolate calculation of MSE/var{x}
+            # renormalize with variances in vvar1, Lengthscales in vRFM1
+            X1_L = X1 / L[v].isel(z=range(nzabl))
+            MSE[v][:,jt] = s[var].isel(z=range(nzabl)) * (C[v] * (X1_L**-p[v]))
+        # take sqrt to get RMSE
+        RMSE = np.sqrt(MSE[v])
+        # divide by <x> to get epsilon (relative random error)
+        err[v] = RMSE / abs(s[avg].isel(z=range(nzabl)))
+
+    # calculate errors in wind speed and direction using error propagation
+    # grab individual RMSEs
+    sig_u = np.sqrt(MSE["u"])
+    sig_v = np.sqrt(MSE["v"])
+    # calculate wspd error and store
+    err["wspd"] = np.sqrt( (sig_u**2. * s.u_mean.isel(z=range(nzabl))**2. +\
+                            sig_v**2. * s.v_mean.isel(z=range(nzabl))**2.)/\
+                           (s.u_mean.isel(z=range(nzabl))**2. +\
+                            s.v_mean.isel(z=range(nzabl))**2.) ) /\
+                  s.uh.isel(z=range(nzabl))
+    # calculate wdir error and store
+    # first get wdir in radians
+    wdir = s.wdir * np.pi/180.
+    err["wdir"] = np.sqrt( (sig_u**2. * s.u_mean.isel(z=range(nzabl))**2. +\
+                            sig_v**2. * s.v_mean.isel(z=range(nzabl))**2.)/\
+                           ((s.u_mean.isel(z=range(nzabl))**2. +\
+                            s.v_mean.isel(z=range(nzabl))**2.)**2.) ) /\
+                  wdir.isel(z=range(nzabl))
+    # finished, now return
+    return err
 
 # --------------------------------
 # main loop
@@ -632,7 +705,19 @@ if __name__ == "__main__":
     # dnc = "/home/bgreene/simulations/RFM/u09_tw24_qw10_256/"
     # dnc = "/home/bgreene/simulations/RFM/u15_tw03_qw01_256/"
     # dnc = "/home/bgreene/simulations/RFM/u15_tw10_qw04_256/"
-    dnc = "/home/bgreene/simulations/RFM/u15_tw24_qw10_256/"
+    # dnc = "/home/bgreene/simulations/RFM/u15_tw24_qw10_256/"
+    
+    # arguments for simulation directory to process
+    parser = ArgumentParser()
+    parser.add_argument("-d", required=True, action="store", dest="dsbl", nargs=1,
+                        help="Simulation base directory")
+    parser.add_argument("-s", required=True, action="store", dest="sim", nargs=1,
+                        help="Simulation name")
+    args = parser.parse_args()
+
+    # construct simulation directory and ncdir
+    dnc = os.path.join(args.dsbl[0], args.sim[0]) + os.sep
+
     # sim timesteps to consider
     t0 = 450000
     t1 = 540000
@@ -645,7 +730,7 @@ if __name__ == "__main__":
     s = load_stats(dnc+fstats)
 
     # calculate and load 4th order variances
-    calc_4_order(dnc, fall, s)
+    # calc_4_order(dnc, fall, s)
     # load again
     var4 = xr.load_dataset(dnc+"variances_4_order.nc")
     R = xr.load_dataset(dnc+"autocorr.nc")
@@ -656,26 +741,32 @@ if __name__ == "__main__":
     delta_x = np.logspace(np.log10(s.dx), np.log10(s.Lx), 
                           num=nfilt, base=10.0, dtype=np.float64)
     # construct filter transfer function
-    filt = construct_filter(delta_x, s.nx, s.Lx)
+    # filt = construct_filter(delta_x, s.nx, s.Lx)
     # call RFM
-    calc_RFM_var(dnc, fall, s, filt, delta_x)
+    # calc_RFM_var(dnc, fall, s, filt, delta_x)
     # load back this data
     RFM_var = xr.load_dataset(dnc+"RFM.nc")
 
+    # compute integral lengthscales using calc_lengthscale
+    # print("Calculating lengthscales")
+    # calc_lengthscale(dnc, R)
+    # load
+    L = xr.load_dataset(dnc+"lengthscale.nc")
+    # quickly need to correct these integral scales
+    for key in L.keys():
+        # loop over z
+        for jz in range(L.z.size):
+            if L[key][jz] == 0.:
+                L[key][jz] = R[key].isel(z=jz, x=range(2)).integrate("x")
+
     # next step: calculate/fit RFM coefficients to normalized variances
     # feed function var4 and RFM_var, stats file
-    dx_fit_1 = [2000, 5000] # use RFM_test.ipynb to explore this
-    dx_fit_2 = [2000, 5000] # appears to be valid for both 1 and 2
-    fit_RFM(dnc, RFM_var, var4, s, dx_fit_1, dx_fit_2)
+    dx_fit_1 = [1, 15] # use RFM_test.ipynb to explore this
+    dx_fit_2 = [5, 20] # appears to be valid for both 1 and 2
+    fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2)
     # load C, p
     C = xr.load_dataset(dnc+"fit_C.nc")
     p = xr.load_dataset(dnc+"fit_p.nc")
-
-    # compute integral lengthscales using calc_lengthscale
-    print("Calculating lengthscales")
-    calc_lengthscale(dnc, R)
-    # load
-    L = xr.load_dataset(dnc+"lengthscale.nc")
 
     # calculate errors
     T1 = 5.    # seconds
