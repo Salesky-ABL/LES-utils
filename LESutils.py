@@ -17,6 +17,7 @@ from numba import njit
 from glob import glob
 from dask.diagnostics import ProgressBar
 from scipy.interpolate import RegularGridInterpolator
+from scipy.fft import fft2, ifft2, fftshift, ifftshift
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
@@ -1344,6 +1345,7 @@ def read_checkpoint_binary(fcheck, nx, ny, nz, lbc=0):
     ld = int(2 * ((nx//2)+1))
     nz_tot = nz + 1
     # open binary file
+    print(f"Reading file: {fcheck}")
     with open(fcheck, "rb") as ff:
         # jt_total, integer
         jt_total = np.fromfile(ff, dtype=np.int32, count=1)
@@ -1389,6 +1391,7 @@ def read_checkpoint_binary(fcheck, nx, ny, nz, lbc=0):
         sgs_q3_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny)
 
     # finished reading
+    print("Reshaping arrays")
     # reshape each variable into 3d/2d, then only return nonzero values
     u = u_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     v = v_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
@@ -1399,19 +1402,134 @@ def read_checkpoint_binary(fcheck, nx, ny, nz, lbc=0):
     RHSy = RHSy_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     RHSz = RHSz_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     RHS_T = RHS_T_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
-    RHS_q = RHS_q_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     sgs_t3 = sgs_t3_tot.reshape((ld,ny), order="F")[:nx,:]
-    sgs_q3 = sgs_q3_tot.reshape((ld,ny), order="F")[:nx,:]
-    T_s = T_s_tot.reshape((nx,ny), order="F")
-    q_s = q_s_tot.reshape((nx,ny), order="F")
     psi_m = psi_m_tot.reshape((nx,ny), order="F")
+    Cs_opt2 = Cs_opt2_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     F_LM = F_LM_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     F_MM = F_MM_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     F_QN = F_QN_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
     F_NN = F_NN_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
-    Cs_opt2 = Cs_opt2_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
-
+    T_s = T_s_tot.reshape((nx,ny), order="F")
+    q_s = q_s_tot.reshape((nx,ny), order="F")
+    RHS_q = RHS_q_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    sgs_q3 = sgs_q3_tot.reshape((ld,ny), order="F")[:nx,:]
+    print("Finished reading and reshaping! Returning...")
     # return list of each of these variables
-    return [jt_total, u, v, w, theta, q, RHSx, RHSy, RHSz, RHS_T, RHS_q, 
-            sgs_t3, sgs_q3, T_s, q_s, psi_m, F_LM, F_MM, F_QN, F_NN, Cs_opt2]
+    return [jt_total, u, v, w, theta, q, RHSx, RHSy, RHSz, RHS_T, sgs_t3, 
+            psi_m, Cs_opt2, F_LM, F_MM, F_QN, F_NN, T_s, q_s,RHS_q,sgs_q3]
 # ---------------------------------------------
+def interp_2d_spec_np(a, nx, ny, nz, nf):
+    """Compute two-dimensional interpolation on a numpy array by performing
+    the following steps:
+    1) compute forward 2d fft and normalize by original (nx*ny)
+    2) shift zero-frequency to center of array and zero-pad
+    3) shift back to have zero-frequency in top left of array
+    4) compute inverse 2d fft, do not normalize by new (nx_new*ny_new)
+    5) return real values
+    -Input-
+    nx: number of grid points in x-dimension
+    ny: number of grid points in y-dimension
+    nz: number of grid points in z-dimension (can be zero)
+    nf: factor by which to increase number of points in both x & y dim
+    -Returns-
+    interpolated array a_interp(nx*nf, ny*nf, nz)
+    """
+    # compute forward fft
+    # normalize by nx*ny with forward
+    f_a = fft2(a, axes=(0,1), norm="forward")
+    # shift frequencies to prepare for zero-padding
+    f_a_shift = fftshift(f_a, axes=(0,1))
+    # compute number of zeros to pad to beginning and end of x,y
+    npadx = (nx//2)*(nf-1)
+    npady = (ny//2)*(nf-1)
+    # check if only passed a 2d array to begin
+    if nz == 0:
+        f_a_shift_pad = np.pad(f_a_shift, pad_width=((npadx, npadx), 
+                                                     (npady, npady)))
+    else:
+        # only pad in x,y
+        f_a_shift_pad = np.pad(f_a_shift, pad_width=((npadx, npadx), 
+                                                     (npady, npady), 
+                                                     (0, 0)))
+    # shift zero frequencies back to start
+    f_a_pad = ifftshift(f_a_shift_pad, axes=(0,1))
+    # ifft to return interpolated array
+    a_interp = ifft2(f_a_pad, axes=(0,1), norm="forward")
+    # return real values
+    return np.real(a_interp)
+# ---------------------------------------------
+def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf):
+    """Interpolate a simulation checkpoint file in the horizontal (x,y) using
+    spectral interpolation. Call read_checkpoint_binary and interp_2d_spec_np
+    (NOT interpolate_spec_2d!) to handle pure np arrays.
+    -Input-
+    fcheck: path to checkpoint file
+    fdir_save: directory to save new file (will get new filename from fcheck)
+    nx: number of grid points in x-dimension
+    ny: number of grid points in y-dimension
+    nz: number of grid points in z-dimension
+    nf: factor by which to increase number of points in both x & y dim
+    -Output-
+    binary file with same structure as fcheck but with interpolated fields
+    """
+    # first, read the binary checkpoint file
+    checkpoint = read_checkpoint_binary(fcheck, nx, ny, nz)
+    # initialize new list to hold interpolated fields
+    checkpoint_interp = []
+    # compute dimensions for later
+    nx_new = nx*nf
+    ny_new = ny*nf
+    ld = int(2 * ((nx_new//2)+1))
+    nz_tot = nz + 1
+    # loop over each field in checkpoint (not including jt_total) and interp
+    for jx, x in enumerate(checkpoint):
+        # dont do anything with jt_total, just store and move on
+        if jx == 0:
+            checkpoint_interp.append(x)
+        else:
+            # compute size of x to feed to interp_2d_spec_np
+            nn = x.shape
+            nx_x, ny_x = nn[0], nn[1]
+            # check how many dimensions in x
+            nd = x.ndim
+            # if nd is 2, then nz_x should be 0; otherwise, can index
+            if nd == 2:
+                nz_x = 0
+            else:
+                nz_x = nn[2]
+            # call interp_2d_spec_np()
+            print(f"Calling interp_2d_spec_np for field {jx}, shape={x.shape}")
+            x_interp = interp_2d_spec_np(x, nx_x, ny_x, nz_x, nf)
+            print(f"Finished interpolating! New shape={x_interp.shape}")
+            # store in larger arrays
+            # TODO: convert list to dictionary with variable names
+            # for now, will hard code with jx need which shape
+            if jx in [1,2,3,4,5,6,7,8,9,12,13,14,15,16,19]:
+                # these go in arrays size(ld,ny,nz_tot)
+                x_new = np.zeros((ld,ny_new,nz_tot), dtype=np.float64)
+                x_new[:nx_new,:,:nz] = x_interp
+            elif jx in [10,20]:
+                # these are 2d and go in arrays size(ld,ny)
+                x_new = np.zeros((ld,ny_new), dtype=np.float64)
+                x_new[:nx_new,:] = x_interp
+            elif jx in [11,17,18]:
+                # these get to stay size(nx,ny)
+                x_new = x_interp
+            else:
+                print(f"How did you get here? jx={jx}")
+
+            # store padded arrays
+            checkpoint_interp.append(x_new)
+
+    # finished interpolating all variables
+    # want save interpolated file in fdir_save
+    # parse fcheck to get new name: fdir_save/checkpoint_xxxxxxx_interp.out
+    fsave = os.path.join(fdir_save, 
+                         f"{fcheck.split('/')[-1].split('.')[0]}_interp.out")
+    print(f"Saving file: {fsave}")
+    with open(fsave, "wb") as ff:
+        # loop over each variable and convert to binary
+        for c in checkpoint_interp:
+            ff.write(c.tobytes("F"))
+    print("Finished writing interpolated file.")
+    return
