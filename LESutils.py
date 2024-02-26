@@ -1325,3 +1325,93 @@ def interpolate_spec_2d(d, Lx, Ly, nf):
     d_int["x"] = x2
     d_int["y"] = y2
     return d_int
+# ---------------------------------------------
+def read_checkpoint_binary(fcheck, nx, ny, nz, lbc=0):
+    """Reads checkpoint_XXXXXXX.out file produced by LES code in inst_field
+    subroutine of io.f90. Only works for lbc=0 as of now (i.e., expects
+    T_sfc_init and q_sfc_init to be inside of checkpoint file). Returns list
+    of numpy arrays.
+    -Input-
+    fcheck: path to checkpoint file
+    nx: number of grid points in x-dimension (will be converted to ld)
+    ny: number of grid points in y-dimension (used as-is)
+    nz: number of grid points in z-dimension (will be converted to nz_tot=nz+1)
+    lbc: lower boundary condition flag, default=0 (do not change)
+    -Returns-
+    check: list of numpy nd arrays
+    """
+    # compute relevant dimensions expected from output
+    ld = int(2 * ((nx//2)+1))
+    nz_tot = nz + 1
+    # open binary file
+    with open(fcheck, "rb") as ff:
+        # jt_total, integer
+        jt_total = np.fromfile(ff, dtype=np.int32, count=1)
+        # u_tot(ld,ny,nz_tot)
+        u_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # v_tot(ld,ny,nz_tot)
+        v_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # w_tot(ld,ny,nz_tot)
+        w_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # theta_tot(ld,ny,nz_tot)
+        theta_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # q_tot(ld,ny,nz_tot)
+        q_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # RHSx_tot(ld,ny,nz_tot)
+        RHSx_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # RHSy_tot(ld,ny,nz_tot)
+        RHSy_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # RHSz_tot(ld,ny,nz_tot)
+        RHSz_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # RHS_T_tot(ld,ny,nz_tot)
+        RHS_T_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # sgs_t3(ld,ny,1)
+        sgs_t3_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny)
+        # psi_m(nx,ny)
+        psi_m_tot = np.fromfile(ff, dtype=np.float64, count=nx*ny)
+        # Cs_opt2_tot(ld,ny,nz_tot)
+        Cs_opt2_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # F_LM_tot(ld,ny,nz_tot)
+        F_LM_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # F_MM_tot(ld,ny,nz_tot)
+        F_MM_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # F_QN_tot(ld,ny,nz_tot)
+        F_QN_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # F_NN_tot(ld,ny,nz_tot)
+        F_NN_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # T_s(nx,ny)
+        T_s_tot = np.fromfile(ff, dtype=np.float64, count=nx*ny)
+        # q_s(nx,ny)
+        q_s_tot = np.fromfile(ff, dtype=np.float64, count=nx*ny)
+        # RHS_q_tot(ld,ny,nz_tot)
+        RHS_q_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny*nz_tot)
+        # sgs_q3(ld,ny,1)
+        sgs_q3_tot = np.fromfile(ff, dtype=np.float64, count=ld*ny)
+
+    # finished reading
+    # reshape each variable into 3d/2d, then only return nonzero values
+    u = u_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    v = v_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    w = w_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    theta = theta_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    q = q_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    RHSx = RHSx_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    RHSy = RHSy_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    RHSz = RHSz_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    RHS_T = RHS_T_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    RHS_q = RHS_q_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    sgs_t3 = sgs_t3_tot.reshape((ld,ny), order="F")[:nx,:]
+    sgs_q3 = sgs_q3_tot.reshape((ld,ny), order="F")[:nx,:]
+    T_s = T_s_tot.reshape((nx,ny), order="F")
+    q_s = q_s_tot.reshape((nx,ny), order="F")
+    psi_m = psi_m_tot.reshape((nx,ny), order="F")
+    F_LM = F_LM_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    F_MM = F_MM_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    F_QN = F_QN_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    F_NN = F_NN_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+    Cs_opt2 = Cs_opt2_tot.reshape((ld,ny,nz_tot), order="F")[:nx,:,:nz]
+
+    # return list of each of these variables
+    return [jt_total, u, v, w, theta, q, RHSx, RHSy, RHSz, RHS_T, RHS_q, 
+            sgs_t3, sgs_q3, T_s, q_s, psi_m, F_LM, F_MM, F_QN, F_NN, Cs_opt2]
+# ---------------------------------------------
