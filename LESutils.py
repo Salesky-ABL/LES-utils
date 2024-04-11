@@ -1419,8 +1419,8 @@ def read_checkpoint_binary(fcheck, nx, ny, nz, lbc=0):
             psi_m, Cs_opt2, F_LM, F_MM, F_QN, F_NN, T_s, q_s,RHS_q,sgs_q3]
 # ---------------------------------------------
 def interp_2d_spec_np(a, nx, ny, nz, nf):
-    """Compute two-dimensional interpolation on a numpy array by performing
-    the following steps:
+    """Compute two-dimensional spectral interpolation on a numpy array 
+    by performing the following steps:
     1) compute forward 2d fft and normalize by original (nx*ny)
     2) shift zero-frequency to center of array and zero-pad
     3) shift back to have zero-frequency in top left of array
@@ -1458,10 +1458,40 @@ def interp_2d_spec_np(a, nx, ny, nz, nf):
     # return real values
     return np.real(a_interp)
 # ---------------------------------------------
-def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf):
+def interp_2d_np(a, nx, ny, nf, Lx, Ly, method="linear"):
+    """Compute two-dimensional interpolation on a numpy array by in
+    physical space using the scipy.interpolate.RegularGridInterpolater
+    module
+    -Input-
+    nx: number of grid points in x-dimension
+    ny: number of grid points in y-dimension
+    nf: factor by which to increase number of points in both x & y dim
+    Lx: size of domain in x-dimension
+    Ly: size of domain in y-dimension
+    method: interpolation method to pass to RegularGridInterpolater,
+        default="linear"
+    -Returns-
+    interpolated array a_interp(nx*nf, ny*nf, nz)
+    """
+    # construct original x-y grid
+    x = np.linspace(0, Lx, nx)
+    y = np.linspace(0, Ly, ny)
+    # xg, yg = np.meshgrid(x, y, indexing="ij", sparse=True)
+    # initialize interpolater
+    interp = RegularGridInterpolator(points=((x,y)), values=a,
+                                     method=method, fill_value=None)
+    # construct new x-y grid
+    xnew = np.linspace(0, Lx, nf*nx)
+    ynew = np.linspace(0, Ly, nf*ny)
+    Xg, Yg = np.meshgrid(xnew, ynew, indexing="ij")
+    # perform interpolation and return
+    return interp((Xg,Yg))
+# ---------------------------------------------
+def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf, Lx, Ly, spec=True):
     """Interpolate a simulation checkpoint file in the horizontal (x,y) using
-    spectral interpolation. Call read_checkpoint_binary and interp_2d_spec_np
-    (NOT interpolate_spec_2d!) to handle pure np arrays.
+    spectral or physical interpolation. Call read_checkpoint_binary and 
+    interp_2d_spec_np/interp_2d_np (NOT interpolate_spec_2d!) to handle 
+    pure np arrays.
     -Input-
     fcheck: path to checkpoint file
     fdir_save: directory to save new file (will get new filename from fcheck)
@@ -1469,6 +1499,9 @@ def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf):
     ny: number of grid points in y-dimension
     nz: number of grid points in z-dimension
     nf: factor by which to increase number of points in both x & y dim
+    Lx: size of domain in x-dimension
+    Ly: size of domain in y-dimension
+    spec: flag to use spectral or physical interpolation, default=True
     -Output-
     binary file with same structure as fcheck but with interpolated fields
     """
@@ -1497,9 +1530,15 @@ def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf):
                 nz_x = 0
             else:
                 nz_x = nn[2]
-            # call interp_2d_spec_np()
-            print(f"Calling interp_2d_spec_np for field {jx}, shape={x.shape}")
-            x_interp = interp_2d_spec_np(x, nx_x, ny_x, nz_x, nf)
+            # select interpolation method
+            if spec:
+                # call interp_2d_spec_np()
+                print(f"Calling interp_2d_spec_np for field {jx}, shape={x.shape}")
+                x_interp = interp_2d_spec_np(x, nx_x, ny_x, nz_x, nf)
+            else:
+                # call interp_2d_np()
+                print(f"Calling interp_2d_np for field {jx}, shape={x.shape}")
+                x_interp = interp_2d_np(x, nx_x, ny_x, nf, Lx, Ly, "cubic")
             print(f"Finished interpolating! New shape={x_interp.shape}")
             # store in larger arrays
             # TODO: convert list to dictionary with variable names

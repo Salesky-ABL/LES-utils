@@ -1,4 +1,4 @@
-#!/glade/work/bgreene/conda-envs/LES/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: spec.py
 # Author: Brian R. Greene
@@ -39,7 +39,7 @@ def acf1d(din, detrend="constant", poslags=False):
     R = xrft.ifft(PSD, dim="freq_x", true_phase=True, true_amplitude=True, 
                   lag=0).real
     # average in y and time
-    Ry = R.mean(dim=("y"))
+    Ry = R.mean(dim=("y")).compute()
     # check poslags
     if poslags:
         return Ry.where(Ry.x >= 0., drop=True)
@@ -86,7 +86,7 @@ def autocorr_1d(dnc, fall, s, detrend="constant"):
         Rsave[v] /= float(nf)
 
     # save nc file
-    fsave = f"{dnc}R_1d_8-10h.nc"
+    fsave = f"{dnc}R_1d.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         Rsave.to_netcdf(fsave, mode="w")
@@ -911,7 +911,7 @@ def calc_lengthscale(dnc, R):
         # store LL in Lsave
         Lsave[var] = xr.DataArray(data=LL, coords=dict(z=R.z))
     # save file and return
-    fsave = f"{dnc}lengthscale_8-10h.nc"
+    fsave = f"{dnc}lengthscale.nc"
     print(f"Saving file: {fsave}")
     with ProgressBar():
         Lsave.to_netcdf(fsave, mode="w")
