@@ -1572,3 +1572,73 @@ def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf, Lx, Ly, spec=True):
             ff.write(c.tobytes("F"))
     print("Finished writing interpolated file.")
     return
+# ---------------------------------------------
+def calc_TKE_budget(dnc, fall, s):
+    """Calculate TKE budget terms by looping over files in fall.
+    Save a single netcdf file in dnc.
+    -Input-
+    dnc: string, absolute path to netcdf directory for saving new file
+    fall: list of strings of all the files to be loaded one-by-one
+    s: xr.Dataset, stats file corresponding to simulation for attrs
+    """
+    # construct Dataset to save
+    dsave = xr.Dataset(data_vars=None, attrs=s.attrs)
+    # get number of files
+    nf = len(fall)
+    # start by computing components that do not require full 3d fields
+    # P: shear production
+    P = (-1 * s.u_mean.differentiate("z",2)*s.uw_cov_tot) +\
+        (-1 * s.v_mean.differentiate("z",2)*s.vw_cov_tot)
+    dsave["P"] = P
+    # B: buoyancy production
+    g = 9.81
+    beta = g/s.thetav_mean[0]
+    B = beta*s.tvw_cov_tot
+    dsave["B"] = B
+    # partition into production by theta versus q
+    Bt = beta*s.tw_cov_tot
+    Bq = 0.61*g*s.qw_cov_tot/1000.
+    dsave["Bt"] = Bt
+    dsave["Bq"] = Bq
+    # D: dissipation
+    dsave["D"] = s.dissip_mean
+
+    # compute turbulent transport by looping over volume files
+    # begin looping over each file and load one by one
+    for jf, ff in enumerate(fall):
+        # load file
+        print(f"Loading file: {ff}")
+        d = xr.load_dataset(ff)
+        # compute velocity fluctuations
+        up = d.u - d.u.mean(dim=("x","y"))
+        vp = d.v - d.v.mean(dim=("x","y"))
+        wp = d.w - d.w.mean(dim=("x","y"))
+        # compute "inst" 3rd-order moments uj'uj'u3'
+        uuw = up * up * wp
+        vvw = vp * vp * wp
+        www = wp * wp * wp
+        # add and take mean to get <e'w'>
+        ew = 0.5 * (uuw + vvw + www).mean(dim=("x","y"))
+        # calc gradient to get T: turbulent transport
+        T = -1 * ew.differentiate("z", 2).compute()
+        # store depending on whether this is first iteration
+        if jf == 0:
+            dsave["T"] = T
+        else:
+            dsave["T"] += T
+    # divide dsave by nf to get mean
+    dsave["T"] /= float(nf)
+    # finally, calculate residual term R
+    dsave["R"] = -1 * (dsave.P + dsave.B + dsave.D + dsave.T)
+
+    # save file
+    fsave = f"{dnc}TKE_budget.nc"
+    # delete old file for saving new one
+    if os.path.exists(fsave):
+        os.system(f"rm {fsave}")
+    print(f"Saving file: {fsave}")
+    with ProgressBar():
+        dsave.to_netcdf(fsave, mode="w")
+    
+    print("Finished computing TKE budget!")
+    return
