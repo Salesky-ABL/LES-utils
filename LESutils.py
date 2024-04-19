@@ -18,6 +18,7 @@ from glob import glob
 from dask.diagnostics import ProgressBar
 from scipy.interpolate import RegularGridInterpolator
 from scipy.fft import fft2, ifft2, fftshift, ifftshift
+from multiprocessing import Process
 # --------------------------------
 # Begin Defining Functions
 # --------------------------------
@@ -1297,6 +1298,44 @@ def nc_rotate(dnc, t0, t1, dt):
         Dsave.to_netcdf(fsave, mode="w")
     
     print("Finished saving all files!")
+    return
+# ---------------------------------------------
+def nc_rotate_parallel(dnc, t0, t1, dt, nproc=4):
+    """Purpose: load netcdf all_TTTTTTT.nc files and rotate coordinates
+    into mean streamwise flow using rot_interp, then save netcdf file with
+    new coordinates.
+    :param str dnc: absolute path to netcdf directory
+    :param int t0: starting timestep
+    :param int t1: ending timestep
+    :param int dt: number of files between timesteps
+    :param int nproc: number of parallel processes to run
+    """
+    # first need to split timesteps into (nproc) chunks
+    # define list of timesteps
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
+    nt = len(timesteps)
+    nt_per_proc = nt // nproc
+    t0_all, t1_all = [], []
+    # loop over nproc chunks and index timesteps
+    jn = 0
+    for jp in range(nproc):
+        # check if this is the last chunk, then just use remaining timesteps
+        if jp == nproc-1:
+            jt_use = timesteps[jn:]
+
+        else:
+            jt_use = timesteps[jn:jn+nt_per_proc]
+            jn += nt_per_proc
+        # store first and last timesteps
+        t0_all.append(jt_use[0])
+        t1_all.append(jt_use[-1])
+    # initialize Processes
+    proc_all = [Process(target=nc_rotate, 
+                        args=(dnc, t0_all[jproc], t1_all[jproc], dt))\
+                for jproc in range(nproc)]
+    [p.start() for p in proc_all]
+    [p.join() for p in proc_all]
+
     return
 # ---------------------------------------------
 def interpolate_spec_2d(d, Lx, Ly, nf):
