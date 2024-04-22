@@ -1,6 +1,6 @@
-#!/glade/work/bgreene/conda-envs/LES/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
-# Name: process.py
+# Name: process2.py
 # Author: Brian R. Greene
 # University of Oklahoma
 # Created: 31 March 2023
