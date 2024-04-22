@@ -423,11 +423,11 @@ def fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2):
         # loop over heights within abl
         for jz in range(nzabl):
             # grab delta_x ranges based on dx_fit_1 and dx_fit_2
-            ix1 = np.where((RFM_var.delta_x / L[v].isel(z=jz) >= dx_fit_1[0]) &\
-                           (RFM_var.delta_x / L[v].isel(z=jz) <= dx_fit_1[1]))[0]
+            ix1 = np.where((RFM_var.delta_x  >= dx_fit_1[0]) &\
+                           (RFM_var.delta_x  <= dx_fit_1[1]))[0]
             # grab ranges of data for fitting
             # x: delta_x
-            xfit = RFM_var.delta_x.isel(delta_x=ix1) / L[v].isel(z=jz)
+            xfit = RFM_var.delta_x.isel(delta_x=ix1) #/ L[v].isel(z=jz)
             # y: filtered variance / ensemble variance
             yfit = RFM_var[v].isel(z=jz, delta_x=ix1) / s[var].isel(z=jz)
             # fit x and y to power law
@@ -445,11 +445,11 @@ def fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2):
                             coords=dict(z=zabl))
         # loop over heights within abl
         for jz in range(nzabl):
-            ix2 = np.where((RFM_var.delta_x / L[v].isel(z=jz) >= dx_fit_2[0]) &\
-                           (RFM_var.delta_x / L[v].isel(z=jz) <= dx_fit_2[1]))[0]
+            ix2 = np.where((RFM_var.delta_x >= dx_fit_2[0]) &\
+                           (RFM_var.delta_x <= dx_fit_2[1]))[0]
             # grab ranges of data for fitting
             # x: delta_x
-            xfit = RFM_var.delta_x.isel(delta_x=ix2) / L[v].isel(z=jz)
+            xfit = RFM_var.delta_x.isel(delta_x=ix2) #/ L[v].isel(z=jz)
             # y: filtered variance / ensemble variance
             yfit = RFM_var[v].isel(z=jz, delta_x=ix2) / var4[var].isel(z=jz)
             # fit x and y to power law
@@ -497,7 +497,6 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     """
     # grab abl indices
     nzabl = s.nzabl
-    zabl = s.z.isel(z=range(nzabl))
     # use Taylor hypothesis to convert time to space
     X1 = s.uh.isel(z=range(nzabl)) * T1
     X2 = s.uh.isel(z=range(nzabl)) * T2
@@ -523,7 +522,7 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
         print(f"Computing errors for: {v}")
         # use values of C and p to extrapolate calculation of MSE/var{x}
         # renormalize with variances in vvar1, Lengthscales in vRFM1
-        X1_L = X1 / L[v].isel(z=range(nzabl))
+        X1_L = X1 #/ L[v].isel(z=range(nzabl))
         MSE[v] = s[var].isel(z=range(nzabl)) * (C[v] * (X1_L**-p[v]))
         # take sqrt to get RMSE
         RMSE = np.sqrt(MSE[v])
@@ -534,7 +533,7 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
         print(f"Computing errors for: {v}")
         # use values of C and p to extrapolate calculation of MSE/var{x}
         # renormalize with variances in vvar1, Lengthscales in vRFM2
-        X2_L = X2 / L[v].isel(z=range(nzabl))
+        X2_L = X2 #/ L[v].isel(z=range(nzabl))
         MSE[v] = var4[var].isel(z=range(nzabl)) * (C[v] * (X2_L**-p[v]))
         # take sqrt to get RMSE
         RMSE = np.sqrt(MSE[v])
@@ -627,7 +626,7 @@ def calc_error(dnc, T1, T2, var4, s, C, p, L):
     
     return
 # --------------------------------
-def recalc_err_array(Tnew, var4, s, C, p, L):
+def recalc_err_array(Tnew, s, C, p, L):
     """Calculate the relative random errors given the RFM coefficients
     C and p for a range of desired averaging times T.
     This will only process the following 1st order moments:
@@ -669,7 +668,7 @@ def recalc_err_array(Tnew, var4, s, C, p, L):
             X1 = s.uh.isel(z=range(nzabl)) * iT
             # use values of C and p to extrapolate calculation of MSE/var{x}
             # renormalize with variances in vvar1, Lengthscales in vRFM1
-            X1_L = X1 / L[v].isel(z=range(nzabl))
+            X1_L = X1 #/ L[v].isel(z=range(nzabl))
             MSE[v][:,jt] = s[var].isel(z=range(nzabl)) * (C[v] * (X1_L**-p[v]))
         # take sqrt to get RMSE
         RMSE = np.sqrt(MSE[v])
@@ -761,8 +760,8 @@ if __name__ == "__main__":
 
     # next step: calculate/fit RFM coefficients to normalized variances
     # feed function var4 and RFM_var, stats file
-    dx_fit_1 = [1, 15] # use RFM_test.ipynb to explore this
-    dx_fit_2 = [5, 20] # appears to be valid for both 1 and 2
+    dx_fit_1 = [800, 3000] # use RFM_test.ipynb to explore this
+    dx_fit_2 = [800, 3000] # appears to be valid for both 1 and 2
     fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2)
     # load C, p
     C = xr.load_dataset(dnc+"fit_C.nc")

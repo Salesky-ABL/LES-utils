@@ -260,7 +260,7 @@ def spectrogram(dnc, fall, s, detrend="constant"):
     # check if rotate attr exists
     if "rotate" in d.attrs.keys():
         if bool(d.rotate):
-            fsave = f"{dnc}spectrogram_8-10h_rot.nc"
+            fsave = f"{dnc}spectrogram_rot.nc"
         else:
             fsave = f"{dnc}spectrogram.nc"
     else:

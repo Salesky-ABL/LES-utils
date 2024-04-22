@@ -6,86 +6,84 @@
 # Created: 31 March 2023
 # Purpose: process output from LES using functions from LESutils
 # 3 Nov 2023: call nc_rotate on each sim
+# 22 Apr 2024: compute spectra, acf, integral lengthscales for CBL sims
+# and just hardcode the simulations; spread across numerous Processes
 # --------------------------------
 import sys
 sys.path.append("..")
-import os
-import yaml
 import numpy as np
-from LESutils import out2netcdf, calc_stats, nc_rotate
-from argparse import ArgumentParser
+import xarray as xr
+from time import time
+from LESutils import load_stats
+from spec import spectrogram, autocorr_1d, calc_lengthscale
 from multiprocessing import Process
 
-# arguments for simulation directory to process
-parser = ArgumentParser()
-parser.add_argument("-d", required=True, action="store", dest="dsbl", nargs=1,
-                    help="Simulation base directory")
-parser.add_argument("-s", required=True, action="store", dest="sim", nargs=1,
-                    help="Simulation name")
-args = parser.parse_args()
+# define function to map to each process
+# want to compute spectrogram, acf, and lengthscales for a given sim
+def process_spec(dnc, t0, t1, dt, fstats):
+    """Purpose: for given simulation, run spectrogram(), autocorr_1d(), and
+    calc_lengthscale(). Streamline calling these functions to pass to multiple
+    Processes at once for a given list of simulations.
+    :param str dnc: absolute path to netcdf directory
+    :param int t0: starting timestep
+    :param int t1: ending timestep
+    :param int dt: number of files between timesteps
+    :param str fstats: filename of mean stats to be loaded
+    """
+    sname = dnc.split('/')[-1]
+    print(f"Processing simulation: {sname}")
+    tstart0 = time()
+    # load stats file
+    s = load_stats(dnc+fstats)
+    # determine list of file timesteps from input
+    timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
+    # determine files to read from timesteps
+    # use rotated fields
+    fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    # call spectrogram
+    print("Calling spectrogram()")
+    tstart1 = time()
+    spectrogram(dnc, fall, s, detrend="constant")
+    print(f"Finished spectrogram! Time elapsed: {(time()-tstart1)/60:.2f} min")
+    # call autocorr_1d
+    print("Calling autocorr_1d()")
+    tstart2 = time()
+    autocorr_1d(dnc, fall, s, detrend="constant")
+    print(f"Finished autocorr_1d! Time elapsed: {(time()-tstart2)/60:.2f} min")
+    # load resulting file
+    R = xr.load_dataset(dnc+"R_1d.nc")
+    # call calc_lengthscale
+    print("Calling calc_lengthscale()")
+    tstart3 = time()
+    calc_lengthscale(dnc, R)
+    print(f"Finished calc_lengthscale! Time elapsed: {(time()-tstart3)/60:.2f} min")
+    # complete
+    print(f"Finished processing {sname}! Total time: {(time()-tstart0)/60:.2f} min")
+    return
 
-# construct simulation directory and ncdir
-dout = os.path.join(args.dsbl[0], args.sim[0], "output") + os.sep
-dnc = f"{dout}netcdf/"
+if __name__ == "__main__":
+    # define storage directory
+    d0 = "/home/bgreene/simulations/CBL/"
+    # define sims
+    sims = ["u01_tw24_qw02_dq+04","u01_tw24_qw10_dq-02","u01_tw24_qw10_dq-06",
+            "u01_tw24_qw10_dq+10","u01_tw24_qw39_dq-08","u04_tw20_qw08_dq-03",
+            "u08_tw24_qw10_dq-02","u09_tw24_qw10_dq-06","u12_tw01_qw01_dq-08",
+            "u14_tw01_qw02_dq+08","u15_tw03_qw00_dq-01","u15_tw03_qw00_dq-02",
+            "u15_tw03_qw00_dq+01","u15_tw03_qw00_dq+02","u15_tw10_qw04_dq-02",
+            "u15_tw10_qw04_dq-06","u15_tw10_qw04_dq+06","u15_tw24_qw10_dq-06"]
+    # common sim info
+    t0_ = 450000
+    t1_ = 540000
+    dt_ = 1000
+    fstats_ = "mean_stats_xyt_5-6h.nc"
+    nsim = len(sims)
 
-# call out2netcdf
-# here, processing hours 8-9 = timesteps 900000 - 1080000
-# use params27.yaml
-with open(f"{dout}params27.yaml") as fp:
-    pp = yaml.safe_load(fp)
-# add simlabel to params
-pp["simlabel"] = pp["path"].split(os.sep)[-2]
-# add nhr_s
-pp["nhr_s"] = "8-9h"
-# add dnc
-pp["dnc"] = dnc
-
-# define timesteps
-t0 = 900000
-t1 = 988000
-t2 = 990000
-t3 = 1080000
-dt = pp["nwrite"]
-
-# call nc_rotate (this loops over time already)
-# split into two processes
-# initiate concurrent processes for each half of the timesteps
-process1 = Process(target=nc_rotate, 
-                    args=(dnc, t0, t1, dt))
-process2 = Process(target=nc_rotate, 
-                    args=(dnc, t2, t3, dt))
-# begin each process
-process1.start()
-process2.start()
-# join each process
-process1.join()
-process2.join()
-
-# # loop over timesteps and call out2netcdf
-# # keep track of f_all for later
-# f_all = []
-# for tt in timesteps:
-#     print(f"Processing timestep: {tt}")
-#     f_all.append(f"{dnc}all_{tt:07d}.nc")
-#     # out2netcdf(dout, tt, del_raw=False, **pp)
-
-# # run calc_stats using f_all
-# print(f"Begin calculating stats for timesteps {timesteps[0]} - {timesteps[-1]}")
-# pp["return_fstats"] = True
-# fstats = calc_stats(f_use=f_all, **pp)
-
-# # finally, calc stats for hours 8-10 = timesteps 900000 - 1260000
-# # to be consistent with previous hour block, load with same freq as in params27.yaml
-# # rewrite nhr_s
-# pp["nhr_s"] = "8-10h"
-# # construct new timesteps for hrs 8-10
-# tf2 = 1260000
-# timesteps2 = np.arange(t0, tf2+1, pp["nwrite"], dtype=np.int32)
-# # loop over timesteps to define new array of f_all2
-# f_all2 = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps2]
-# # compute new stats file
-# print(f"Begin calculating stats for timesteps {timesteps2[0]} - {timesteps2[-1]}")
-# pp["return_fstats"] = True
-# fstats = calc_stats(f_use=f_all2, **pp)
-
-print(f"Finished processing {args.sim[0]} output for hours 8-9!")
+    # functions do not take more than 1-2% of yeti's memory so can call
+    # as many Processes as there are sims
+    proc_all = [Process(target=process_spec,
+                        args=(f"{d0}{sim}/", t0_, t1_, dt_, fstats_))\
+                for sim in sims]
+    # start processes
+    [p.start() for p in proc_all]
+    # join processes
+    [p.join for p in proc_all]

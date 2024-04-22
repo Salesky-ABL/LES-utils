@@ -1,4 +1,4 @@
-#!/glade/work/bgreene/conda-envs/LES/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: process.py
 # Author: Brian R. Greene
@@ -8,7 +8,7 @@
 # Update 27 November 2023: use arguments to submit jobs on Casper
 # --------------------------------
 import sys
-sys.path.append("..")
+sys.path.append("/home/bgreene/LES-utils/")
 import os
 from argparse import ArgumentParser
 from LESutils import process_raw_sim
@@ -28,13 +28,13 @@ dnc = f"{dout}netcdf/"
 
 # these values will be consistent for all CBL sims
 # label to give stats file that matchs nhr
-nhr_s = "8-9h"
+nhr_s = "5-6h"
 # number of hours from end to process
 nhr = 1
 # organize file output first?
-organize = True
+organize = False
 # number of batch jobs, if applicable
-nrun = 3
+nrun = 8
 # delete raw output files?
 del_raw = True
 # overwrite old files if they exist?
