@@ -13,6 +13,7 @@ import yaml
 import xrft
 import xarray as xr
 import numpy as np
+import seaborn as sb
 from numba import njit
 from glob import glob
 from dask.diagnostics import ProgressBar
@@ -596,124 +597,193 @@ def load_stats(fstats):
     :param bool SBL: denote whether sim data is SBL or not to calculate\
         appropriate ABL depth etc., default=False
     :param bool display: print statistics from files, default=False
-    :return dd: xarray dataset
+    :return s: xarray dataset
     """
     print(f"Reading file: {fstats}")
-    dd = xr.load_dataset(fstats)
+    s = xr.load_dataset(fstats)
     # calculate ustar
-    dd["ustar"] = ((dd.uw_cov_tot**2.) + (dd.vw_cov_tot**2.)) ** 0.25
-    dd["ustar2"] = dd.ustar ** 2.
+    s["ustar"] = ((s.uw_cov_tot**2.) + (s.vw_cov_tot**2.)) ** 0.25
+    s["ustar2"] = s.ustar ** 2.
     # grab ustar0 and calc tstar0 for normalizing in plotting
-    dd["ustar0"] = dd.ustar.isel(z=0)
-    dd["tstar0"] = -dd.tw_cov_tot.isel(z=0)/dd.ustar0
+    s["ustar0"] = s.ustar.isel(z=0)
+    s["tstar0"] = -s.tw_cov_tot.isel(z=0)/s.ustar0
     # local thetastar
-    dd["tstar"] = -dd.tw_cov_tot / dd.ustar
+    s["tstar"] = -s.tw_cov_tot / s.ustar
     # qstar
-    if "qw_cov_tot" in list(dd.keys()):
-        dd["qstar0"] = -dd.qw_cov_tot.isel(z=0) / dd.ustar0
+    if "qw_cov_tot" in list(s.keys()):
+        s["qstar0"] = -s.qw_cov_tot.isel(z=0) / s.ustar0
     # calculate TKE
-    dd["e"] = 0.5 * (dd.u_var + dd.v_var + dd.w_var)
+    s["e"] = 0.5 * (s.u_var + s.v_var + s.w_var)
     # calculate Obukhov length L
-    dd["L"] = -(dd.ustar0**3) * dd.theta_mean.isel(z=0) / (0.4 * 9.81 * dd.tw_cov_tot.isel(z=0))
+    s["L"] = -(s.ustar0**3) * s.theta_mean.isel(z=0) / (0.4 * 9.81 * s.tw_cov_tot.isel(z=0))
     # calculate uh and wdir
-    dd["uh"] = np.sqrt(dd.u_mean**2. + dd.v_mean**2.)
-    dd["wdir"] = np.arctan2(-dd.u_mean, -dd.v_mean) * 180./np.pi
-    jz_neg = np.where(dd.wdir < 0.)[0]
-    dd["wdir"][jz_neg] += 360.
+    s["uh"] = np.sqrt(s.u_mean**2. + s.v_mean**2.)
+    s["wdir"] = np.arctan2(-s.u_mean, -s.v_mean) * 180./np.pi
+    jz_neg = np.where(s.wdir < 0.)[0]
+    s["wdir"][jz_neg] += 360.
     # calc ABL depth h
-    if dd.lbc == 0:
-        # dd["h"] = dd.z.where(dd.ustar2 <= 0.05*dd.ustar2[0], drop=True)[0] / 0.95
+    if s.lbc == 0:
+        s["h"] = s.z.where(s.ustar2 <= 0.05*s.ustar2[0], drop=True)[0] / 0.95
         # use 1% threshold instead of 5%
-        # dd["h"] = dd.z.where(dd.ustar2 <= 0.01*dd.ustar2[0], drop=True)[0] / 0.99
+        # s["h"] = s.z.where(s.ustar2 <= 0.01*s.ustar2[0], drop=True)[0] / 0.99
         # use FWHM of LLJ compared with Ug for h
-        dG = dd.uh.max() - 8.
-        dd["h"] = dd.z.where(dd.uh >= 8 + 0.5*dG, drop=True)[-1]
+        # dG = s.uh.max() - 8.
+        # s["h"] = s.z.where(s.uh >= 8 + 0.5*dG, drop=True)[-1]
     else:
         # CBL
-        dd["h"] = dd.z.isel(z=dd.tw_cov_tot.argmin())
+        s["h"] = s.z.isel(z=s.tw_cov_tot.argmin())
     # save number of points within abl (z <= h)
-    dd.attrs["nzabl"] = dd.z.where(dd.z <= dd.h, drop=True).size
+    s.attrs["nzabl"] = s.z.where(s.z <= s.h, drop=True).size
 
     # calculate mean lapse rate between lowest grid point and z=h
-    delta_T = dd.theta_mean.sel(z=dd.h, method="nearest") - dd.theta_mean[0]
-    delta_z = dd.z.sel(z=dd.h, method="nearest") - dd.z[0]
-    dd["dT_dz"] = delta_T / delta_z
+    delta_T = s.theta_mean.sel(z=s.h, method="nearest") - s.theta_mean[0]
+    delta_z = s.z.sel(z=s.h, method="nearest") - s.z[0]
+    s["dT_dz"] = delta_T / delta_z
     # calculate eddy turnover time TL
-    if dd.lbc == 0:
+    if s.lbc == 0:
         # use ustar
-        dd["TL"] = dd.h / dd.ustar0
+        s["TL"] = s.h / s.ustar0
     else:
         # calculate wstar and use for TL calc
         # use humidity if exists
-        if "tvw_cov_tot" in list(dd.keys()):
-            dd["wstar"] = ((9.81/dd.thetav_mean.sel(z=dd.h/2, method="nearest"))\
-                            * dd.tvw_cov_tot[0] * dd.h) ** (1./3.)
+        if "tvw_cov_tot" in list(s.keys()):
+            s["wstar"] = ((9.81/s.thetav_mean.sel(z=s.h/2, method="nearest"))\
+                            * s.tvw_cov_tot[0] * s.h) ** (1./3.)
             # use this wstart to calc Qstar, otherwise skip
-            dd["Qstar0"] = dd.qw_cov_tot.isel(z=0) / dd.wstar
+            s["Qstar0"] = s.qw_cov_tot.isel(z=0) / s.wstar
         else:
-            dd["wstar"] = ((9.81/dd.theta_mean.sel(z=dd.h/2, method="nearest"))\
-                            * dd.tw_cov_tot[0] * dd.h) ** (1./3.)
+            s["wstar"] = ((9.81/s.theta_mean.sel(z=s.h/2, method="nearest"))\
+                            * s.tw_cov_tot[0] * s.h) ** (1./3.)
         # now calc TL using wstar in CBL
-        dd["TL"] = dd.h / dd.wstar
+        s["TL"] = s.h / s.wstar
         # use wstar to define Tstar in CBL
-        dd["Tstar0"] = dd.tw_cov_tot.isel(z=0) / dd.wstar
+        s["Tstar0"] = s.tw_cov_tot.isel(z=0) / s.wstar
+        # also define similar Tvstar
+        s["Tvstar0"] = s.tvw_cov_tot.isel(z=0)/s.wstar
         
     # determine how many TL exist over range of files averaged
     # convert tavg string to number by cutting off the single letter at the end
-    # dd["nTL"] = dd.tavg * 3600. / dd.TL
+    # s["nTL"] = s.tavg * 3600. / s.TL
+
+    # compute useful labels and assign to loaded file
+    # calc phi_wq and store closest value of -60, -30, 30, 60
+    jzi = s.tw_cov_tot.argmin()
+    phi_wq = np.arctan(s.qw_cov_tot[0] / s.qw_cov_tot[jzi]).values * 180./np.pi
+    # check ranges, also save linestyle
+    if (phi_wq <= -45.):
+        s.attrs["phi_wq"] = -60
+        s.attrs["phi_wq2"] = r"$-60^\circ$"
+        s.attrs["ls"] = "-."
+    elif ((phi_wq < 0.) & (phi_wq > -45.0)):
+        s.attrs["phi_wq"] = -30
+        s.attrs["phi_wq2"] = r"$-30^\circ$"
+        s.attrs["ls"] = ":"
+    elif (phi_wq >= 45.):
+        s.attrs["phi_wq"] = 60
+        s.attrs["phi_wq2"] = r"$60^\circ$"
+        s.attrs["ls"] = "--"
+    elif ((phi_wq > 0.) & (phi_wq < 45.0)):
+        s.attrs["phi_wq"] = 30
+        s.attrs["phi_wq2"] = r"$30^\circ$"
+        s.attrs["ls"] = "-"
+    else:
+        s.attrs["phi_wq"] = None
+    # create label from phi_wq
+    s.attrs["phi_wq_lab"] = rf"$\varphi_{{wq}} = {s.phi_wq}^\circ$"
+    # calc zi/L and store closest value of -1, -1000
+    # store line color
+    ziL = (s.h/s.L).values.item()
+    if round(ziL, 0) == -1.0:
+        s.attrs["ziL"] = "1"
+        s.attrs["lc"] = "b"
+    elif round(ziL, -3) == -1000.0:
+        s.attrs["ziL"] = "1000"
+        s.attrs["lc"] = "r"
+    # create label from ziL
+    s.attrs["ziL_lab"] = f"$-z_i/L = {s.ziL}$"
+    # get values of evaporative fraction
+    # Ef = L / (H + L)
+    # some constants
+    cp = 1004
+    Lv = 2.5e6
+    L = Lv * s.qw_cov_tot[0].values.item()/1000
+    H = cp * s.tw_cov_tot[0].values.item()
+    Ef = L / (H + L)
+    s.attrs["Ef"] = round(Ef, 1)
+    # store secondary line color for Ef
+    cmap_Ef = sb.diverging_palette(30, 160, l=65, center="dark", n=3)
+    if s.Ef == 0.2:
+        s.attrs["lc2"] = cmap_Ef[0]
+    elif s.Ef == 0.5:
+        s.attrs["lc2"] = cmap_Ef[1]
+    elif s.Ef == 0.8:
+        s.attrs["lc2"] = cmap_Ef[2]
+    # create label from Ef
+    s.attrs["Ef_lab"] = f"$E_f = {s.Ef}$"
+    # use theta_v gradient method to find zi
+    s.attrs["zi"] = s.z[s.thetav_mean.differentiate("z", 2).argmax()].values.item()
+    # calculate theta-q correlation
+    s["Rtq"] = s.tq_cov_res / np.sqrt(s.theta_var * s.q_var)
+
+    # compute entrainment scales from Moene et al. (2006, BLM)
+    # S_*c = sqrt[ S_*0^2 + 10S_*e^2 ]
+    Tstare = s.tw_cov_tot[jzi] / s.wstar
+    s["Tstarc"] = np.sqrt(s.Tstar0**2. + 10*Tstare**2.)
+    Qstare = s.qw_cov_tot[jzi] / s.wstar
+    s["Qstarc"] = np.sqrt(s.Qstar0**2. + 10*Qstare**2.)
 
     # calculate MOST dimensionless functions phim, phih
-    kz = 0.4 * dd.z # kappa * z
-    dd["phim"] = (kz/dd.ustar) * np.sqrt(dd.u_mean.differentiate("z", 2)**2.+\
-                                         dd.v_mean.differentiate("z", 2)**2.)
-    dd["phih"] = (kz/dd.tstar) * dd.theta_mean.differentiate("z", 2)
+    kz = 0.4 * s.z # kappa * z
+    s["phim"] = (kz/s.ustar) * np.sqrt(s.u_mean.differentiate("z", 2)**2.+\
+                                         s.v_mean.differentiate("z", 2)**2.)
+    s["phih"] = (kz/s.tstar) * s.theta_mean.differentiate("z", 2)
     # MOST stability parameter z/L
-    dd["zL"] = dd.z / dd.L
-    if dd.lbc == 0:
+    s["zL"] = s.z / s.L
+    if s.lbc == 0:
         # calculate TKE-based sbl depth
-        # dd["he"] = dd.z.where(dd.e <= 0.05*dd.e[0], drop=True)[0]
+        # s["he"] = s.z.where(s.e <= 0.05*s.e[0], drop=True)[0]
         # calculate h/L as global stability parameter
-        dd["hL"] = dd.h / dd.L
+        s["hL"] = s.h / s.L
         # create string for labels from hL
-        dd.attrs["label3"] = f"$h/L = {{{dd.hL.values:3.2f}}}$"
+        s.attrs["label3"] = f"$h/L = {{{s.hL.values:3.2f}}}$"
         # calculate Richardson numbers
         # sqrt((du_dz**2) + (dv_dz**2))
-        dd["du_dz"] = np.sqrt(dd.u_mean.differentiate("z", 2)**2. +\
-                              dd.v_mean.differentiate("z", 2)**2.)
+        s["du_dz"] = np.sqrt(s.u_mean.differentiate("z", 2)**2. +\
+                              s.v_mean.differentiate("z", 2)**2.)
         # Rig = N^2 / S^2
-        dd["N2"] = dd.theta_mean.differentiate("z", 2) * 9.81 / dd.theta_mean.isel(z=0)
+        s["N2"] = s.theta_mean.differentiate("z", 2) * 9.81 / s.theta_mean.isel(z=0)
         # flag negative values of N^2
-        dd.N2[dd.N2 < 0.] = np.nan
-        dd["Rig"] = dd.N2 / dd.du_dz / dd.du_dz
+        s.N2[s.N2 < 0.] = np.nan
+        s["Rig"] = s.N2 / s.du_dz / s.du_dz
         # Rif = beta * w'theta' / (u'w' du/dz + v'w' dv/dz)
-        dd["Rif"] = (9.81/dd.theta_mean.isel(z=0)) * dd.tw_cov_tot /\
-                    (dd.uw_cov_tot*dd.u_mean.differentiate("z", 2) +\
-                     dd.vw_cov_tot*dd.v_mean.differentiate("z", 2))
+        s["Rif"] = (9.81/s.theta_mean.isel(z=0)) * s.tw_cov_tot /\
+                    (s.uw_cov_tot*s.u_mean.differentiate("z", 2) +\
+                     s.vw_cov_tot*s.v_mean.differentiate("z", 2))
         # # bulk Richardson number Rib based on values at top of sbl and sfc
-        # dz = dd.z[dd.nzsbl] - dd.z[0]
-        # dTdz = (dd.theta_mean[dd.nzsbl] - dd.theta_mean[0]) / dz
-        # dUdz = (dd.u_mean[dd.nzsbl] - dd.u_mean[0]) / dz
-        # dVdz = (dd.v_mean[dd.nzsbl] - dd.v_mean[0]) / dz
-        # dd.attrs["Rib"] = (dTdz * 9.81 / dd.theta_mean[0]) / (dUdz**2. + dVdz**2.)
+        # dz = s.z[s.nzsbl] - s.z[0]
+        # dTdz = (s.theta_mean[s.nzsbl] - s.theta_mean[0]) / dz
+        # dUdz = (s.u_mean[s.nzsbl] - s.u_mean[0]) / dz
+        # dVdz = (s.v_mean[s.nzsbl] - s.v_mean[0]) / dz
+        # s.attrs["Rib"] = (dTdz * 9.81 / s.theta_mean[0]) / (dUdz**2. + dVdz**2.)
         # calc Ozmidov scale real quick
-        dd["Lo"] = np.sqrt(-dd.dissip_mean / (dd.N2 ** (3./2.)))
+        s["Lo"] = np.sqrt(-s.dissip_mean / (s.N2 ** (3./2.)))
         # calculate Kolmogorov microscale: eta = (nu**3 / dissip) ** 0.25
-        dd["eta"] = ((1.14e-5)**3. / (-dd.dissip_mean)) ** 0.25
+        s["eta"] = ((1.14e-5)**3. / (-s.dissip_mean)) ** 0.25
         # calculate MOST dimensionless dissipation rate: kappa*z*epsilon/ustar^3
-        dd["phie"] = -1*dd.dissip_mean*kz / (dd.ustar**3.)
+        s["phie"] = -1*s.dissip_mean*kz / (s.ustar**3.)
         # calculate gradient scales from Sorbjan 2017, Greene et al. 2022
         l0 = 19.22 # m
-        l1 = 1./(dd.Rig**(3./2.)).where(dd.z <= dd.h, drop=True)
-        kz = 0.4 * dd.z.where(dd.z <= dd.h, drop=True)
-        dd["Ls"] = kz / (1 + (kz/l0) + (kz/l1))
-        dd["Us"] = dd.Ls * np.sqrt(dd.N2)
-        dd["Ts"] = dd.Ls * dd.theta_mean.differentiate("z", 2)
+        l1 = 1./(s.Rig**(3./2.)).where(s.z <= s.h, drop=True)
+        kz = 0.4 * s.z.where(s.z <= s.h, drop=True)
+        s["Ls"] = kz / (1 + (kz/l0) + (kz/l1))
+        s["Us"] = s.Ls * np.sqrt(s.N2)
+        s["Ts"] = s.Ls * s.theta_mean.differentiate("z", 2)
         # calculate local Obukhov length Lambda
-        dd["LL"] = -(dd.ustar**3.) * dd.theta_mean / (0.4 * 9.81 * dd.tw_cov_tot)
+        s["LL"] = -(s.ustar**3.) * s.theta_mean / (0.4 * 9.81 * s.tw_cov_tot)
         # calculate level of LLJ: zj
-        dd["zj"] = dd.z.isel(z=dd.uh.argmax())
+        s["zj"] = s.z.isel(z=s.uh.argmax())
 
-    return dd
+    return s
 # ---------------------------------------------
 def load_full(dnc, t0, t1, dt, delta_t, stats=None, rotate=False):
     """Reading function for multiple instantaneous volumetric netcdf files
