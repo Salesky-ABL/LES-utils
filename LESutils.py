@@ -631,7 +631,18 @@ def load_stats(fstats):
         # s["h"] = s.z.where(s.uh >= 8 + 0.5*dG, drop=True)[-1]
     else:
         # CBL
-        s["h"] = s.z.isel(z=s.tw_cov_tot.argmin())
+        s.attrs["h"] = s.z.isel(z=s.tvw_cov_tot.argmin()).values.item()
+        # calc ZOM/FOM heights of entrainment zone
+        # h0 = height where tvw goes negative first
+        s.attrs["h0"] = s.z.where(s.tvw_cov_tot <= 0, drop=True)[0].values.item()
+        # h2 = height where tvw goes back to zero
+        # will do this by meeting threshold since it does not always reach 0
+        tvw = s.tvw_cov_tot/s.tvw_cov_tot[0]
+        jz2 = np.where((tvw <= 0) & (tvw > -0.02) & (s.z > s.h))[0][0]
+        s.attrs["h2"] = s.z[jz2].values.item()
+        # entrainment zone depth is distance between h2 and zi
+        s.attrs["dEz"] = s.h2 - s.h
+
     # save number of points within abl (z <= h)
     s.attrs["nzabl"] = s.z.where(s.z <= s.h, drop=True).size
 
@@ -735,7 +746,7 @@ def load_stats(fstats):
     # calculate MOST dimensionless functions phim, phih
     kz = 0.4 * s.z # kappa * z
     s["phim"] = (kz/s.ustar) * np.sqrt(s.u_mean.differentiate("z", 2)**2.+\
-                                         s.v_mean.differentiate("z", 2)**2.)
+                                       s.v_mean.differentiate("z", 2)**2.)
     s["phih"] = (kz/s.tstar) * s.theta_mean.differentiate("z", 2)
     # MOST stability parameter z/L
     s["zL"] = s.z / s.L
@@ -1684,6 +1695,8 @@ def interp_checkpoint_2d(fcheck, fdir_save, nx, ny, nz, nf, Lx, Ly, spec=True):
 # ---------------------------------------------
 def calc_TKE_budget(dnc, fall, s):
     """Calculate TKE budget terms by looping over files in fall.
+    Also compute third order moments of w, theta, q, and thetav to use
+    in computing skewness later.
     Save a single netcdf file in dnc.
     -Input-
     dnc: string, absolute path to netcdf directory for saving new file
@@ -1730,13 +1743,34 @@ def calc_TKE_budget(dnc, fall, s):
         ew = 0.5 * (uuw + vvw + www).mean(dim=("x","y"))
         # calc gradient to get T: turbulent transport
         T = -1 * ew.differentiate("z", 2).compute()
+        # now calculate third order moments in w, theta, q, and thetav
+        tp = d.theta - d.theta.mean(dim=("x","y"))
+        qp = d.q - d.q.mean(dim=("x","y"))
+        thetav = d.theta * (1. + 0.61*d.q/1000.)
+        tvp = thetav - thetav.mean(dim=("x","y"))
+        tp3 = (tp*tp*tp).mean(dim=("x","y")).compute()
+        qp3 = (qp*qp*qp).mean(dim=("x","y")).compute()
+        tvp3 = (tvp*tvp*tvp).mean(dim=("x","y")).compute()
+        wp3 = (wp*wp*wp).mean(dim=("x","y")).compute()
         # store depending on whether this is first iteration
         if jf == 0:
             dsave["T"] = T
+            dsave["tp3"] = tp3
+            dsave["qp3"] = qp3
+            dsave["tvp3"] = tvp3
+            dsave["wp3"] = wp3
         else:
             dsave["T"] += T
+            dsave["tp3"] += tp3
+            dsave["qp3"] += qp3
+            dsave["tvp3"] += tvp3
+            dsave["wp3"] += wp3
     # divide dsave by nf to get mean
     dsave["T"] /= float(nf)
+    dsave["tp3"] /= float(nf)
+    dsave["qp3"] /= float(nf)
+    dsave["tvp3"] /= float(nf)
+    dsave["wp3"] /= float(nf)
     # finally, calculate residual term R
     dsave["R"] = -1 * (dsave.P + dsave.B + dsave.D + dsave.T)
 
