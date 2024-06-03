@@ -631,17 +631,17 @@ def load_stats(fstats):
         # s["h"] = s.z.where(s.uh >= 8 + 0.5*dG, drop=True)[-1]
     else:
         # CBL
-        s.attrs["h"] = s.z.isel(z=s.tvw_cov_tot.argmin()).values.item()
+        s["h"] = s.z.isel(z=s.tvw_cov_tot.argmin())
         # calc ZOM/FOM heights of entrainment zone
         # h0 = height where tvw goes negative first
-        s.attrs["h0"] = s.z.where(s.tvw_cov_tot <= 0, drop=True)[0].values.item()
+        s["h0"] = s.z.where(s.tvw_cov_tot <= 0, drop=True)[0]
         # h2 = height where tvw goes back to zero
         # will do this by meeting threshold since it does not always reach 0
         tvw = s.tvw_cov_tot/s.tvw_cov_tot[0]
         jz2 = np.where((tvw <= 0) & (tvw > -0.02) & (s.z > s.h))[0][0]
-        s.attrs["h2"] = s.z[jz2].values.item()
+        s["h2"] = s.z[jz2]
         # entrainment zone depth is distance between h2 and zi
-        s.attrs["dEz"] = s.h2 - s.h
+        s["dEz"] = s.h2 - s.h
 
     # save number of points within abl (z <= h)
     s.attrs["nzabl"] = s.z.where(s.z <= s.h, drop=True).size
@@ -672,76 +672,74 @@ def load_stats(fstats):
         # also define similar Tvstar
         s["Tvstar0"] = s.tvw_cov_tot.isel(z=0)/s.wstar
         
-    # determine how many TL exist over range of files averaged
-    # convert tavg string to number by cutting off the single letter at the end
-    # s["nTL"] = s.tavg * 3600. / s.TL
+        # compute useful labels and assign to loaded file
+        # calc phi_wq and store closest value of -60, -30, 30, 60
+        jzi = s.tvw_cov_tot.argmin()
+        phi_wq = np.arctan(s.qw_cov_tot[0] / s.qw_cov_tot[jzi]).values * 180./np.pi
+        # check ranges, also save linestyle
+        if (phi_wq <= -45.):
+            s.attrs["phi_wq"] = -60
+            s.attrs["phi_wq2"] = r"$-60^\circ$"
+            s.attrs["ls"] = "-."
+        elif ((phi_wq < 0.) & (phi_wq > -45.0)):
+            s.attrs["phi_wq"] = -30
+            s.attrs["phi_wq2"] = r"$-30^\circ$"
+            s.attrs["ls"] = ":"
+        elif (phi_wq >= 45.):
+            s.attrs["phi_wq"] = 60
+            s.attrs["phi_wq2"] = r"$60^\circ$"
+            s.attrs["ls"] = "--"
+        elif ((phi_wq > 0.) & (phi_wq < 45.0)):
+            s.attrs["phi_wq"] = 30
+            s.attrs["phi_wq2"] = r"$30^\circ$"
+            s.attrs["ls"] = "-"
+        else:
+            s.attrs["phi_wq"] = None
+        # create label from phi_wq
+        s.attrs["phi_wq_lab"] = rf"$\varphi_{{wq}} = {s.phi_wq}^\circ$"
+        # calc temperature flux ratio
+        s["tw_ratio"] = s.tw_cov_tot[0] / s.tw_cov_tot[jzi]
+        # calc zi/L and store closest value of -1, -1000
+        # store line color
+        ziL = (s.h/s.L).values.item()
+        if round(ziL, 0) == -1.0:
+            s.attrs["ziL"] = "1"
+            s.attrs["lc"] = "b"
+        elif round(ziL, -3) <= -1000.0:
+            s.attrs["ziL"] = "1000"
+            s.attrs["lc"] = "r"
+        # create label from ziL
+        s.attrs["ziL_lab"] = f"$-z_i/L = {s.ziL}$"
+        # get values of evaporative fraction
+        # Ef = L / (H + L)
+        # some constants
+        cp = 1004
+        Lv = 2.5e6
+        L = Lv * s.qw_cov_tot[0].values.item()/1000
+        H = cp * s.tw_cov_tot[0].values.item()
+        Ef = L / (H + L)
+        s.attrs["Ef"] = round(Ef, 1)
+        # store secondary line color for Ef
+        cmap_Ef = sb.diverging_palette(30, 160, l=65, center="dark", n=3)
+        if s.Ef == 0.2:
+            s.attrs["lc2"] = cmap_Ef[0]
+        elif s.Ef == 0.5:
+            s.attrs["lc2"] = cmap_Ef[1]
+        elif s.Ef == 0.8:
+            s.attrs["lc2"] = cmap_Ef[2]
+        # create label from Ef
+        s.attrs["Ef_lab"] = f"$E_f = {s.Ef}$"
+        # use theta_v gradient method to find zi
+        s["zi"] = s.z[s.thetav_mean.differentiate("z", 2).argmax()]
+        # calculate theta-q correlation
+        s["Rtq"] = s.tq_cov_res / np.sqrt(s.theta_var * s.q_var)
 
-    # compute useful labels and assign to loaded file
-    # calc phi_wq and store closest value of -60, -30, 30, 60
-    jzi = s.tw_cov_tot.argmin()
-    phi_wq = np.arctan(s.qw_cov_tot[0] / s.qw_cov_tot[jzi]).values * 180./np.pi
-    # check ranges, also save linestyle
-    if (phi_wq <= -45.):
-        s.attrs["phi_wq"] = -60
-        s.attrs["phi_wq2"] = r"$-60^\circ$"
-        s.attrs["ls"] = "-."
-    elif ((phi_wq < 0.) & (phi_wq > -45.0)):
-        s.attrs["phi_wq"] = -30
-        s.attrs["phi_wq2"] = r"$-30^\circ$"
-        s.attrs["ls"] = ":"
-    elif (phi_wq >= 45.):
-        s.attrs["phi_wq"] = 60
-        s.attrs["phi_wq2"] = r"$60^\circ$"
-        s.attrs["ls"] = "--"
-    elif ((phi_wq > 0.) & (phi_wq < 45.0)):
-        s.attrs["phi_wq"] = 30
-        s.attrs["phi_wq2"] = r"$30^\circ$"
-        s.attrs["ls"] = "-"
-    else:
-        s.attrs["phi_wq"] = None
-    # create label from phi_wq
-    s.attrs["phi_wq_lab"] = rf"$\varphi_{{wq}} = {s.phi_wq}^\circ$"
-    # calc zi/L and store closest value of -1, -1000
-    # store line color
-    ziL = (s.h/s.L).values.item()
-    if round(ziL, 0) == -1.0:
-        s.attrs["ziL"] = "1"
-        s.attrs["lc"] = "b"
-    elif round(ziL, -3) == -1000.0:
-        s.attrs["ziL"] = "1000"
-        s.attrs["lc"] = "r"
-    # create label from ziL
-    s.attrs["ziL_lab"] = f"$-z_i/L = {s.ziL}$"
-    # get values of evaporative fraction
-    # Ef = L / (H + L)
-    # some constants
-    cp = 1004
-    Lv = 2.5e6
-    L = Lv * s.qw_cov_tot[0].values.item()/1000
-    H = cp * s.tw_cov_tot[0].values.item()
-    Ef = L / (H + L)
-    s.attrs["Ef"] = round(Ef, 1)
-    # store secondary line color for Ef
-    cmap_Ef = sb.diverging_palette(30, 160, l=65, center="dark", n=3)
-    if s.Ef == 0.2:
-        s.attrs["lc2"] = cmap_Ef[0]
-    elif s.Ef == 0.5:
-        s.attrs["lc2"] = cmap_Ef[1]
-    elif s.Ef == 0.8:
-        s.attrs["lc2"] = cmap_Ef[2]
-    # create label from Ef
-    s.attrs["Ef_lab"] = f"$E_f = {s.Ef}$"
-    # use theta_v gradient method to find zi
-    s.attrs["zi"] = s.z[s.thetav_mean.differentiate("z", 2).argmax()].values.item()
-    # calculate theta-q correlation
-    s["Rtq"] = s.tq_cov_res / np.sqrt(s.theta_var * s.q_var)
-
-    # compute entrainment scales from Moene et al. (2006, BLM)
-    # S_*c = sqrt[ S_*0^2 + 10S_*e^2 ]
-    Tstare = s.tw_cov_tot[jzi] / s.wstar
-    s["Tstarc"] = np.sqrt(s.Tstar0**2. + 10*Tstare**2.)
-    Qstare = s.qw_cov_tot[jzi] / s.wstar
-    s["Qstarc"] = np.sqrt(s.Qstar0**2. + 10*Qstare**2.)
+        # compute entrainment scales from Moene et al. (2006, BLM)
+        # S_*c = sqrt[ S_*0^2 + 10S_*e^2 ]
+        Tstare = s.tw_cov_tot[jzi] / s.wstar
+        s["Tstarc"] = np.sqrt(s.Tstar0**2. + 10*Tstare**2.)
+        Qstare = s.qw_cov_tot[jzi] / s.wstar
+        s["Qstarc"] = np.sqrt(s.Qstar0**2. + 10*Qstare**2.)
 
     # calculate MOST dimensionless functions phim, phih
     kz = 0.4 * s.z # kappa * z
