@@ -64,13 +64,15 @@ def autocorr_1d(dnc, fall, s, detrend="constant"):
     # get number of files
     nf = len(fall)
     # variables to loop over for calculations
-    vall = ["u", "v", "w", "theta", "u_rot", "v_rot", "q"]
+    vall = ["u", "v", "w", "theta", "u_rot", "v_rot", "q", "thetav"]
 
     # begin looping over each file and load one by one
     for jf, ff in enumerate(fall):
         # load file
         print(f"Loading file: {ff}")
         d = xr.load_dataset(ff)
+        # calc thetav
+        d["thetav"] = d.theta * (1. + 0.61*d.q/1000.)
         # loop over variables
         for v in vall:
             # call acf1d
@@ -161,7 +163,7 @@ def autocorr_2d(dnc, fall, s, timeavg=True):
             Rsave[v] /= float(nf)
     # save nc file
     if timeavg:
-        fsave = f"{dnc}R_2d_8-10h.nc"
+        fsave = f"{dnc}R_2d.nc"
         print(f"Saving file: {fsave}")
         with ProgressBar():
             Rsave.to_netcdf(fsave, mode="w")
@@ -190,8 +192,8 @@ def spectrogram(dnc, fall, s, detrend="constant"):
     vall = ["u_rot", "w", "theta", "q", "thetav"]
     vsave = ["uu", "ww", "tt", "qq", "tvtv"]
     # variables to loop over for cross spectra
-    vall2 = [("u_rot", "w"), ("theta", "w"), ("q", "w"), ("theta", "q")]
-    vsave2 = ["uw", "tw", "qw", "tq"]
+    vall2 = [("u_rot", "w"), ("theta", "w"), ("q", "w"), ("theta", "q"), ("thetav", "w")]
+    vsave2 = ["uw", "tw", "qw", "tq", "tvw"]
     # construct Dataset to save
     Esave = xr.Dataset(data_vars=None, attrs=s.attrs)
     # add additional attr for detrend_first
@@ -376,7 +378,7 @@ def amp_mod(dnc, ts, delta):
         R[key] = xr.corr(ts_l["qd"], E_filt[vts], dim="t")
         R.attrs["use_q"] = "True"
     # save file
-    fsavenc = f"{dnc}AM_coefficients.nc"
+    fsavenc = f"{dnc}AM_coefficients_zh0.25.nc"
     # delete old file for saving new one
     if os.path.exists(fsavenc):
         os.system(f"rm {fsavenc}")
@@ -492,7 +494,7 @@ def nc_LCS(dnc, fall, s, zzi_list, const_zr_varlist, const_zr_savelist,
     # check if rotate attr exists
     if "rotate" in d.attrs.keys():
         if bool(d.rotate):
-            fsave = f"{dnc}G2_8-10h_rot.nc"
+            fsave = f"{dnc}G2_rot.nc"
         else:
             fsave = f"{dnc}G2.nc"
     else:
@@ -662,7 +664,7 @@ def cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
     # threshold value
     dsave.attrs[f"alpha_{cond_svar}_{hilo}"] = alpha.values
     # save and return
-    fsave = f"{dnc}cond_avg_{cond_svar}_{hilo}_8-10h.nc"
+    fsave = f"{dnc}cond_avg_{cond_svar}_{hilo}.nc"
     # delete old file for saving new one
     if os.path.exists(fsave):
         os.system(f"rm {fsave}")
@@ -806,9 +808,9 @@ def calc_quadrant(dnc, fall, s, var_pairs=[("u_rot","w"), ("theta","w")],
         # add hole_factor as attr
         quad.attrs["hole_factor"] = hole_factor
         # add as part of name
-        fsave = f"{dnc}{vlabs}_quadrant_H{hole_factor:.1f}_8-10h.nc"
+        fsave = f"{dnc}{vlabs}_quadrant_H{hole_factor:.1f}.nc"
     else:
-        fsave = f"{dnc}{vlabs}_quadrant_8-10h.nc"
+        fsave = f"{dnc}{vlabs}_quadrant.nc"
     # delete old file for saving new one
     if os.path.exists(fsave):
         os.system(f"rm {fsave}")
@@ -832,7 +834,7 @@ def get_1d_hist(dnc, fall, s, zref, jzref):
     saves netcdf file in dnc
     """
     # define indices for values of z/zj
-    jz = [abs((s.z/zref).values - zzj).argmin() for zzj in jzref]
+    jz = [abs((s.z/zref).values - zh).argmin() for zh in jzref]
     # loop through all files
     for jf, ff in enumerate(fall):
         # load file
@@ -870,9 +872,9 @@ def get_1d_hist(dnc, fall, s, zref, jzref):
     dsave["w"] = wall
     dsave["theta"] = tall
     # save values of z/zj in attrs
-    dsave.attrs["zzj"] = jzref
+    dsave.attrs["zh"] = jzref
     # save netcdf file
-    fsave = f"{dnc}u_w_theta_pdf_8-10h.nc"
+    fsave = f"{dnc}u_w_theta_pdf.nc"
     print(f"Saving file: {fsave}")
     dsave.to_netcdf(fsave, "w")
     print("Finished running get_1d_hist()!")

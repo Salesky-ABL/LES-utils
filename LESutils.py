@@ -632,6 +632,8 @@ def load_stats(fstats):
     else:
         # CBL
         s["h"] = s.z.isel(z=s.tvw_cov_tot.argmin())
+        # zi based on tw as alternate
+        s["ht"] = s.z.isel(z=s.tw_cov_tot.argmin())
         # calc ZOM/FOM heights of entrainment zone
         # h0 = height where tvw goes negative first
         s["h0"] = s.z.where(s.tvw_cov_tot <= 0, drop=True)[0]
@@ -644,7 +646,7 @@ def load_stats(fstats):
         s["dEz"] = s.h2 - s.h
 
     # save number of points within abl (z <= h)
-    s.attrs["nzabl"] = s.z.where(s.z <= s.h, drop=True).size
+    s.attrs["nzabl"] = s.z.where(s.z <= s.ht, drop=True).size
 
     # calculate mean lapse rate between lowest grid point and z=h
     delta_T = s.theta_mean.sel(z=s.h, method="nearest") - s.theta_mean[0]
@@ -676,6 +678,7 @@ def load_stats(fstats):
         # calc phi_wq and store closest value of -60, -30, 30, 60
         jzi = s.tvw_cov_tot.argmin()
         phi_wq = np.arctan(s.qw_cov_tot[0] / s.qw_cov_tot[jzi]).values * 180./np.pi
+        s.attrs["phi_wq_raw"] = phi_wq
         # check ranges, also save linestyle
         if (phi_wq <= -45.):
             s.attrs["phi_wq"] = -60
@@ -702,12 +705,16 @@ def load_stats(fstats):
         # calc zi/L and store closest value of -1, -1000
         # store line color
         ziL = (s.h/s.L).values.item()
+        s.attrs["ziL_raw"] = ziL
         if round(ziL, 0) == -1.0:
             s.attrs["ziL"] = "1"
             s.attrs["lc"] = "b"
         elif round(ziL, -3) <= -1000.0:
             s.attrs["ziL"] = "1000"
             s.attrs["lc"] = "r"
+        else:
+            s.attrs["ziL"] = ziL
+            s.attrs["lc"] = "k"
         # create label from ziL
         s.attrs["ziL_lab"] = f"$-z_i/L = {s.ziL}$"
         # get values of evaporative fraction
