@@ -402,7 +402,11 @@ def organize_output(dout, nrun):
                 for jmpi in range(nmpi):
                     fts = f"{drun}{v}_timeseries_c{jmpi:03d}.out"
                     # load files and store in tsv
-                    tsv[:,jz] = np.loadtxt(fts, usecols=cols)
+                    # check if there is only one z per mpi
+                    if nz_mpi == 1:
+                        tsv[:,jz] = np.loadtxt(fts, usecols=cols).reshape(nt,1)
+                    else:
+                        tsv[:,jz] = np.loadtxt(fts, usecols=cols)
                     # increment jz!
                     jz += nz_mpi
                 # save tsv as new .npz file in dall
