@@ -747,8 +747,8 @@ if __name__ == "__main__":
     RFM_var = xr.load_dataset(dnc+"RFM.nc")
 
     # compute integral lengthscales using calc_lengthscale
-    # print("Calculating lengthscales")
-    # calc_lengthscale(dnc, R)
+    print("Calculating lengthscales")
+    calc_lengthscale(dnc, R)
     # load
     L = xr.load_dataset(dnc+"lengthscale.nc")
     # quickly need to correct these integral scales
@@ -762,12 +762,12 @@ if __name__ == "__main__":
     # feed function var4 and RFM_var, stats file
     dx_fit_1 = [800, 3000] # use RFM_test.ipynb to explore this
     dx_fit_2 = [800, 3000] # appears to be valid for both 1 and 2
-    fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2)
+    # fit_RFM(dnc, RFM_var, var4, L, s, dx_fit_1, dx_fit_2)
     # load C, p
     C = xr.load_dataset(dnc+"fit_C.nc")
     p = xr.load_dataset(dnc+"fit_p.nc")
 
     # calculate errors
-    T1 = 5.    # seconds
+    T1 = 5./3. # seconds
     T2 = 1800. # seconds, = 30 min
     calc_error(dnc, T1, T2, var4, s, C, p, L)

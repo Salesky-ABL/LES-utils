@@ -14,7 +14,7 @@ sys.path.append("..")
 import numpy as np
 import xarray as xr
 from time import time
-from LESutils import load_stats
+from LESutils import load_stats, calc_TKE_budget
 from spec import spectrogram, autocorr_1d, calc_lengthscale
 from multiprocessing import Process
 
@@ -39,16 +39,18 @@ def process_spec(dnc, t0, t1, dt, fstats):
     timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
     # determine files to read from timesteps
     # use rotated fields
-    fall = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    fall_rot = [f"{dnc}all_{tt:07d}_rot.nc" for tt in timesteps]
+    # unrotated fields
+    fall = [f"{dnc}all_{tt:07d}.nc" for tt in timesteps]
     # call spectrogram
     print("Calling spectrogram()")
     tstart1 = time()
-    spectrogram(dnc, fall, s, detrend="constant")
+    spectrogram(dnc, fall_rot, s, detrend="constant")
     print(f"Finished spectrogram! Time elapsed: {(time()-tstart1)/60:.2f} min")
     # call autocorr_1d
     print("Calling autocorr_1d()")
     tstart2 = time()
-    autocorr_1d(dnc, fall, s, detrend="constant")
+    autocorr_1d(dnc, fall_rot, s, detrend="constant")
     print(f"Finished autocorr_1d! Time elapsed: {(time()-tstart2)/60:.2f} min")
     # load resulting file
     R = xr.load_dataset(dnc+"R_1d.nc")
@@ -57,6 +59,11 @@ def process_spec(dnc, t0, t1, dt, fstats):
     tstart3 = time()
     calc_lengthscale(dnc, R)
     print(f"Finished calc_lengthscale! Time elapsed: {(time()-tstart3)/60:.2f} min")
+    # call calc_TKE_budget
+    print("Calling calc_TKE_budget()")
+    tstart4 = time()
+    calc_TKE_budget(dnc, fall, s)
+    print(f"Finished calc_TKE_budget! Time elapsed: {(time()-tstart4)/60:.2f} min")
     # complete
     print(f"Finished processing {sname}! Total time: {(time()-tstart0)/60:.2f} min")
     return
@@ -65,16 +72,14 @@ if __name__ == "__main__":
     # define storage directory
     d0 = "/home/bgreene/simulations/CBL/"
     # define sims
-    sims = ["u01_tw24_qw02_dq+04","u01_tw24_qw10_dq-02","u01_tw24_qw10_dq-06",
-            "u01_tw24_qw10_dq+10","u01_tw24_qw39_dq-08","u04_tw20_qw08_dq-03",
-            "u08_tw24_qw10_dq-02","u09_tw24_qw10_dq-06","u12_tw01_qw01_dq-08",
-            "u14_tw01_qw02_dq+08","u15_tw03_qw00_dq-01","u15_tw03_qw00_dq-02",
-            "u15_tw03_qw00_dq+01","u15_tw03_qw00_dq+02","u15_tw10_qw04_dq-02",
-            "u15_tw10_qw04_dq-06","u15_tw10_qw04_dq+06","u15_tw24_qw10_dq-06"]
+    sims = [
+        "u08_tw005_qw008_dq+20_dt+005",
+        "u0025_tw01_qw016_dq+20_dt+005"
+    ]
     # common sim info
     t0_ = 450000
     t1_ = 540000
-    dt_ = 1000
+    dt_ = 2000
     fstats_ = "mean_stats_xyt_5-6h.nc"
     nsim = len(sims)
 

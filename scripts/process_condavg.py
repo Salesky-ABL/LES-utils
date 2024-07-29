@@ -1,4 +1,4 @@
-#!/glade/work/bgreene/conda-envs/LES/bin/python
+#!/home/bgreene/anaconda3/envs/LES/bin/python
 # --------------------------------
 # Name: process_condavg.py
 # Author: Brian R. Greene
@@ -23,13 +23,12 @@ parser.add_argument("-s", required=True, action="store", dest="sim", nargs=1,
 args = parser.parse_args()
 
 # construct simulation directory and ncdir
-dout = os.path.join(args.dsbl[0], args.sim[0], "output") + os.sep
-dnc = f"{dout}netcdf/"
+dnc = os.path.join(args.dsbl[0], args.sim[0]) + os.sep
 # simulation timesteps to consider
-t0 = 900000
-t1 = 1260000
+t0 = 1440000
+t1 = 1620000
 dt = 2000
-fstats = "mean_stats_xyt_8-10h.nc"
+fstats = "mean_stats_xyt_8-9h.nc"
 use_rot = True
 
 # inputs to cond_avg
@@ -44,7 +43,7 @@ s = load_stats(dnc+fstats)
 # grab values from s
 cond_scale = s.ustar0
 varscale_list = [s.ustar0, s.ustar0, s.tstar0]
-cond_jz = abs((s.z/s.zj).values - zzi).argmin()
+cond_jz = abs((s.z/s.h).values - zzi).argmin()
 # call cond_avg
 cond_avg(dnc, t0, t1, dt, use_rot, s, cond_var, cond_thresh, cond_jz,
          cond_scale, varlist, varscale_list, svarlist)

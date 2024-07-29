@@ -56,18 +56,14 @@ if __name__ == "__main__":
     # define storage directory
     d0 = "/home/bgreene/simulations/CBL/"
     # define list of simulations that still need to be rotated
-    simrot = ["u01_tw24_qw02_dq+04", "u01_tw24_qw10_dq-02",
-              "u01_tw24_qw10_dq+10","u01_tw24_qw39_dq-08",
-              "u04_tw20_qw08_dq-03","u08_tw24_qw10_dq-02",
-              "u12_tw01_qw01_dq-08","u14_tw01_qw02_dq+08",
-              "u15_tw02_qw03_dq-08","u15_tw03_qw00_dq-01",
-              "u15_tw03_qw00_dq-02","u15_tw03_qw00_dq+01",
-              "u15_tw03_qw00_dq+02","u15_tw10_qw04_dq-02",
-              "u15_tw10_qw04_dq+06"]
+    simrot = [
+        "u08_tw005_qw008_dq+20_dt+005",
+        "u0025_tw01_qw016_dq+20_dt+005"
+    ]
     # define sim start and end times
     t0_ = 450000
     t1_ = 540000
-    dt_ = 1000
+    dt_ = 2000
     nproc_ = 15
     # loop over simulations and run nc_rotate_parallel
     for sim in simrot:
@@ -79,9 +75,9 @@ if __name__ == "__main__":
         print("Simulation finished processing!") 
         print(f"Total time: {(elapsed)/60:.2f} min")
 
-    # # initiate concurrent processes for each sim
+    # initiate concurrent processes for each sim
     # process1 = Process(target=rotate_and_wait, 
-    #                     args=(d0+"u15_tw02_qw01_dq+02/", 
+    #                     args=(d0+simrot[0]+"/", 
     #                           t0_, t1_, dt_))
     # # process2 = Process(target=rotate_and_wait, 
     # #                    args=(d0+"u15_tw03_qw01_dry/", 
@@ -89,11 +85,11 @@ if __name__ == "__main__":
     # # process3 = Process(target=rotate_and_wait, 
     # #                    args=(d0+"u15_tw24_qw10_256/", 
     # #                          t0_, t1_, dt_))
-    # # begin each process
+    # begin each process
     # process1.start()
     # # process2.start()
     # # process3.start()
-    # # join each process
+    # join each process
     # process1.join()
     # # process2.join()
     # # process3.join()

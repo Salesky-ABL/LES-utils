@@ -24,14 +24,13 @@ parser.add_argument("-s", required=True, action="store", dest="sim", nargs=1,
 args = parser.parse_args()
 
 # construct simulation directory and ncdir
-dout = os.path.join(args.dsbl[0], args.sim[0], "output") + os.sep
-dnc = f"{dout}netcdf/"
+dnc = os.path.join(args.dsbl[0], args.sim[0]) + os.sep
 
 # simulation timesteps to consider
-t0 = 900000
-t1 = 1260000
+t0 = 1440000
+t1 = 1620000
 dt = 2000
-fstats = "mean_stats_xyt_8-10h.nc"
+fstats = "mean_stats_xyt_8-9h.nc"
 timesteps = np.arange(t0, t1+1, dt, dtype=np.int32)
 
 # list of inputs to calc_quadrant
